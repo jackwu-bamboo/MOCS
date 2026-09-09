@@ -1,8 +1,8 @@
-"""温度控制页：目标温度设定与温度变化曲线。"""
+"""温度控制页：目标温度设定与实时温度显示。"""
 from PyQt5.QtWidgets import (QDoubleSpinBox, QFormLayout, QHBoxLayout, QPushButton,
                              QVBoxLayout, QWidget)
 
-from app.widgets import Card, CurvePlot, ValueCard
+from app.widgets import Card, ValueCard
 
 
 class TemperaturePage(QWidget):
@@ -30,15 +30,8 @@ class TemperaturePage(QWidget):
         left.body.addWidget(self.temp_now)
         left.body.addWidget(self.temp_goal)
         left.body.addStretch(1)
-
-        right = Card("温度变化曲线")
-        self.temp_plot = CurvePlot("温度 (℃)")
-        self.temp_plot.add_series(sim.history["temp"], "#00e5c0", "当前")
-        self.temp_plot.add_series(sim.history["temp_t"], "#ffb74d", "目标", dashed=True)
-        right.body.addWidget(self.temp_plot)
-
         lay.addWidget(left)
-        lay.addWidget(right, 1)
+        lay.addStretch(1)
 
         sim.states_updated.connect(self.refresh)
         self.refresh()
