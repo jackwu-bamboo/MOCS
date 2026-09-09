@@ -12,8 +12,14 @@
   0xB020 温度读取（传感器寄存器，值 = ℃ × 10）
   0x701  连接校验（保持寄存器，应读到 0x0F0F）
 
-接入真实设备后如寄存器类型与实际协议有出入，仅需调整本文件常量。
+接入真实设备后，设备会在串口上持续推送测量数据帧（非 Modbus 报文），
+pymodbus 每次发送请求前会丢弃缓冲区中的残留流数据并打印告警——属正常现象，
+本模块将 pymodbus 日志级别设为 ERROR 以保持终端整洁。
 """
+import logging
+
+logging.getLogger("pymodbus").setLevel(logging.ERROR)
+
 import threading
 
 from PyQt5.QtCore import QObject, pyqtSignal
