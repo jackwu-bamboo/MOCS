@@ -69,30 +69,12 @@ class DeviceSimulator(QObject):
         self._temp_csv = None
         self._param_log_path = None
 
-        # 温控模块驱动：启动即自动扫描串口（参考 ThermostaticModule 的连接流程）
-        self.real_mode = False
-        self.connected_port = ""
-        self._scan_fallback = False
-        self.driver = ThermoModbusDriver(self)
-        self.driver.state_changed.connect(self._on_device_state)
-        self.driver.temperature_read.connect(self._on_device_temp)
-        self.driver.start_scan()
-
-        self.timer = QTimer(self)
-        self.timer.setInterval(int(HISTORY_INTERVAL * 1000))
-        self.timer.timeout.connect(self._tick)
-
-        # 运行期数据落盘
-        self.live_data_dir = None
-        self._temp_csv = None
-        self._param_log_path = None
-
         # 温控模块驱动：启动即自动扫描串口连接（参照 ThermostaticModule）；
         # 未发现真实设备时可回退模拟模式
         self.real_mode = False
         self.connected_port = ""
         self._scan_fallback = False
-        self.driver = ThermoModbusDriver(self)
+        self.driver = ThermoModbusDriver(parent=self)
         self.driver.state_changed.connect(self._on_device_state)
         self.driver.temperature_read.connect(self._on_device_temp)
         self.driver.error.connect(lambda m: self.raise_alarm(f"温控模块通信错误: {m}"))
