@@ -72,6 +72,7 @@ class RunPage(QWidget):
         root.addLayout(mid, 1)
 
         sim.states_updated.connect(self.refresh)
+        sim.states_updated.connect(self.temp_plot.update)
         sim.alarm_raised.connect(self.on_alarm)
         sim.exp_state_changed.connect(lambda *_: self.refresh())
         self.refresh()
@@ -90,7 +91,7 @@ class RunPage(QWidget):
         sim = self.sim
         st = sim.exp_state
         # 运行控制按钮：启动（空闲）/ 停止（运行中）
-        self.btn_start.setEnabled(st is ExpState.CONNECTED)
+        self.btn_start.setEnabled(st in (ExpState.CONNECTED, ExpState.FINISHED))
         self.btn_stop.setEnabled(st is ExpState.RUNNING)
         if st is ExpState.RUNNING:
             self.run_hint.setText(f"运行中 {sim.exp_elapsed()}")

@@ -192,7 +192,7 @@ class MainWindow(QMainWindow):
 
     def _update_run_buttons(self):
         st = self.sim.exp_state
-        self.btn_start.setEnabled(st is ExpState.CONNECTED)
+        self.btn_start.setEnabled(st in (ExpState.CONNECTED, ExpState.FINISHED))
         self.btn_stop.setEnabled(st is ExpState.RUNNING)
 
     def _update_realtime(self):

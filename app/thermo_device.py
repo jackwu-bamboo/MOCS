@@ -123,21 +123,21 @@ class ThermoModbusDriver(QObject):
 
     # ---- 数据读写 ----
     def read_temperature(self):
-        """读盒体实测温度（原始 ℃ 值），失败返回 None。
+        """读顶盖实测温度（℃ = 寄存器值 / 10），失败返回 None。
 
-        实测寄存器布局（0xB020 起输入寄存器 FC04）：
-          0xB020 = 顶盖温度（系统未启动时为 0，暂不使用）
-          0xB021 = 盒体温度（原始 ℃ 值，真机观察 18~19 随环境波动）
+        寄存器布局（0xB020 起输入寄存器 FC04，与 C# Demo readSensor 一致）：
+          0xB020 = 顶盖实测温度（×10 格式；系统总开关关闭时为 0，启动后随加热上升）
+          0xB021 = 盒体/环境温度（约 18，不随加热变化）
         """
         with self._lock:
             if not self._client:
                 return None
             try:
                 rr = self._client.read_input_registers(
-                    TEMP_READ_ADDR, count=2, device_id=SERVER_ADDR)
-                if rr.isError() or len(rr.registers) < 2:
+                    TEMP_READ_ADDR, count=1, device_id=SERVER_ADDR)
+                if rr.isError() or not rr.registers:
                     return None
-                return float(rr.registers[1])
+                return rr.registers[0] / TEMP_SCALE
             except Exception:
                 return None
 
