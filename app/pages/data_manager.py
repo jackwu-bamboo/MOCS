@@ -26,7 +26,7 @@ class DataManagerPage(QWidget):
         form = QFormLayout()
         self.lbl_exp = QLabel("--")
         self.lbl_state = QLabel("--")
-        form.addRow("实验编号 / 名称", self.lbl_exp)
+        form.addRow("实验编号", self.lbl_exp)
         form.addRow("实验状态", self.lbl_state)
         btns = QHBoxLayout()
         self.b_stop = QPushButton("结束实验")
@@ -55,18 +55,18 @@ class DataManagerPage(QWidget):
     def export(self):
         """手动导出 = 重新生成汇总文件（与结束实验自动归档共用同一逻辑）。"""
         if not self.sim.exp_info.get("id"):
-            QMessageBox.warning(self, "提示", "尚未建立实验")
+            QMessageBox.warning(self, "提示", "尚未开始实验，无数据可导出")
             return
         base = export_experiment(self.sim)
         QMessageBox.information(self, "导出完成", f"数据已导出到:\n{base}")
 
     def refresh(self):
         sim = self.sim
-        info = sim.exp_info
-        if info.get("id"):
-            self.lbl_exp.setText(f"{info['id']} / {info.get('name') or '--'}")
+        exp_id = sim.exp_info.get("id")
+        if exp_id:
+            self.lbl_exp.setText(exp_id)
         else:
-            self.lbl_exp.setText("未建立实验（请前往实验流程页）")
+            self.lbl_exp.setText("未开始（启动实验后自动生成编号）")
         self.lbl_state.setText(sim.exp_state.value)
         running = sim.exp_state is ExpState.RUNNING
         counts = [

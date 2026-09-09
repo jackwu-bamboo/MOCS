@@ -199,8 +199,7 @@ class MainWindow(QMainWindow):
 
     def _update_run_buttons(self):
         st = self.sim.exp_state
-        configured = bool(self.sim.exp_info.get("id"))
-        self.btn_start.setEnabled(self.sim.exp_state is ExpState.CONNECTED and configured)
+        self.btn_start.setEnabled(st in (ExpState.CONNECTED, ExpState.FINISHED))
         self.btn_pause.setText("继续" if st is ExpState.PAUSED else "暂停")
         self.btn_pause.setEnabled(st in (ExpState.RUNNING, ExpState.PAUSED))
         self.btn_finish.setEnabled(st in (ExpState.RUNNING, ExpState.PAUSED))

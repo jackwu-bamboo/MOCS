@@ -37,12 +37,9 @@ class RunPage(QWidget):
         info_card = Card("实验信息")
         info_row = QHBoxLayout()
         self.lbl_exp_id = QLabel("--")
-        self.lbl_exp_name = QLabel("--")
-        self.lbl_operator = QLabel("--")
         self.lbl_exp_state = QLabel("--")
         self.lbl_elapsed = QLabel("--:--:--")
-        for text, lbl in [("实验编号: ", self.lbl_exp_id), ("名称: ", self.lbl_exp_name),
-                          ("操作者: ", self.lbl_operator), ("状态: ", self.lbl_exp_state),
+        for text, lbl in [("实验编号: ", self.lbl_exp_id), ("状态: ", self.lbl_exp_state),
                           ("运行时长: ", self.lbl_elapsed)]:
             prefix = QLabel(text)
             prefix.setStyleSheet("color: #8fa8a4;")
@@ -96,9 +93,8 @@ class RunPage(QWidget):
     def refresh(self):
         sim = self.sim
         st = sim.exp_state
-        # 运行控制按钮
-        configured = bool(sim.exp_info.get("id"))
-        self.btn_start.setEnabled(sim.exp_state is ExpState.CONNECTED and configured)
+        # 运行控制按钮（连接后即可启动；结束后可再次启动新实验）
+        self.btn_start.setEnabled(st in (ExpState.CONNECTED, ExpState.FINISHED))
         self.btn_pause.setText("继续" if st is ExpState.PAUSED else "暂停")
         self.btn_pause.setEnabled(st in (ExpState.RUNNING, ExpState.PAUSED))
         self.btn_finish.setEnabled(st in (ExpState.RUNNING, ExpState.PAUSED))
@@ -111,14 +107,6 @@ class RunPage(QWidget):
 
         for name, card in self.dev_cards.items():
             card.set_state(sim.connected.get(name, False))
-        info = sim.exp_info
-        if info.get("id"):
-            self.lbl_exp_id.setText(info["id"])
-            self.lbl_exp_name.setText(info.get("name") or "--")
-            self.lbl_operator.setText(info.get("operator") or "--")
-        else:
-            self.lbl_exp_id.setText("未建立实验，请前往“实验流程”页")
-            self.lbl_exp_name.setText("--")
-            self.lbl_operator.setText("--")
+        self.lbl_exp_id.setText(sim.exp_info.get("id") or "未开始（启动后自动生成编号）")
         self.lbl_exp_state.setText(sim.exp_state.value)
         self.lbl_elapsed.setText(sim.exp_elapsed())

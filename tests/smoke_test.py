@@ -1,4 +1,4 @@
-"""离屏冒烟测试（精简版：仅温度控制）：流程状态机 + 参数日志 + 自动归档。"""
+"""离屏冒烟测试（精简版：仅温度控制，无实验信息配置）：状态机 + 参数日志 + 自动归档。"""
 import os
 import shutil
 import sys
@@ -37,33 +37,25 @@ def main():
     w = MainWindow()
     w.show()
 
-    assert w.pages.count() == 4, "应有 4 个页面（实验流程/运行/温度控制/数据管理）"
+    assert w.pages.count() == 4, "应有 4 个页面"
     assert w.pages.currentIndex() == PAGE_WORKFLOW
     assert_locked(w, locked=True)
 
-    # 连接设备
+    # 连接设备后各模块即解锁，可直接启动（无需配置实验信息）
     w.sim.connect_all()
     assert w.sim.exp_state is ExpState.CONNECTED
     pump_events(app, 0.3)
-    assert_locked(w, locked=True)
+    assert_locked(w, locked=False)
+    assert w.btn_start.isEnabled(), "连接后启动应可用"
 
-    today = time.strftime("%Y%m%d")
-    exp_id = f"EXP-{today}-T{int(time.time()) % 100000:05d}"
-    base = os.path.join("exports", exp_id)
-    shutil.rmtree(base, ignore_errors=True)
-
-    # 配置实验（仅实验信息；温度参数在温度控制页调整）
-    assert w.sim.create_experiment(exp_id, "测试实验", "tester", "smoke")
-    pump_events(app, 0.2)
-    assert w.btn_start.isEnabled(), "配置完成后侧边栏启动应可用"
-    assert_locked(w, locked=False), "实验建立后各模块应解锁"
-
-    # 启动（经侧边栏按钮，应跳转运行页）
+    # 启动（经侧边栏按钮，应跳转运行页；实验编号自动生成）
     w.btn_start.click()
     assert w.sim.exp_state is ExpState.RUNNING
     assert w.pages.currentIndex() == PAGE_RUN
+    assert w.sim.exp_info.get("id"), "启动时应自动生成实验编号"
+    exp_id = w.sim.exp_info["id"]
+    base = os.path.join("exports", exp_id)
     pump_events(app, 1.0)
-    assert_locked(w, locked=False)
 
     # 暂停 → 温度冻结 → 继续
     assert w.sim.pause_experiment()
@@ -85,7 +77,7 @@ def main():
     w.sim.disconnect_all()
     assert w.sim.exp_state in (ExpState.RUNNING, ExpState.PAUSED)
 
-    # 结束 → 归档（页面保持解锁，便于导出数据）
+    # 结束 → 归档（页面保持解锁）
     w.sim.finish_experiment()
     assert w.sim.exp_state is ExpState.FINISHED
     pump_events(app, 0.3)
@@ -93,20 +85,23 @@ def main():
     assert len(w.sim.experiments) == 1
     assert os.path.isfile(os.path.join(base, "experiment.json"))
     temp_csv = os.path.join(base, "data", "temperature.csv")
-    assert os.path.isfile(temp_csv), "温度数据应已落盘"
     with open(temp_csv, encoding="utf-8-sig") as f:
         assert sum(1 for _ in f) > 2, "temperature.csv 应有数据行"
     assert os.path.isfile(os.path.join(base, "data", "param_log.csv"))
 
-    # 新建下一个实验（清空实验信息后重新锁定）
-    w.sim.reset_experiment()
-    assert w.sim.next_exp_id() != exp_id
+    # 结束后可直接再次启动新实验（编号自动递增）
+    assert w.sim.start_experiment()
+    assert w.sim.exp_info["id"] != exp_id
     pump_events(app, 0.2)
-    assert_locked(w, locked=True)
+    assert w.sim.finish_experiment()
+    assert len(w.sim.experiments) == 2
 
     w.sim.disconnect_all()
     assert w.sim.exp_state is ExpState.DISCONNECTED
-    shutil.rmtree(base, ignore_errors=True)
+    pump_events(app, 0.2)
+    assert_locked(w, locked=True)
+    shutil.rmtree(os.path.join("exports", exp_id), ignore_errors=True)
+    shutil.rmtree(os.path.join("exports", w.sim.exp_info["id"]), ignore_errors=True)
     print("SMOKE OK")
     app.quit()
 

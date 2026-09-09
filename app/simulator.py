@@ -97,26 +97,16 @@ class DeviceSimulator(QObject):
         n = sum(1 for e in self.experiments if e["id"].startswith(f"EXP-{today}")) + 1
         return f"EXP-{today}-{n:03d}"
 
-    def create_experiment(self, exp_id, name, operator="", remark=""):
-        self.exp_info = {"id": exp_id.strip(), "name": name.strip(),
-                         "operator": operator.strip(), "remark": remark.strip()}
-        self.exp_params = {}
-        self.exp_started_at = None
-        self.exp_finished_at = None
-        self.paused_at = None
-        if self.exp_state is ExpState.FINISHED:
-            self._set_exp_state(ExpState.CONNECTED)
-        self.raise_alarm(f"实验 {self.exp_info['id']} 已建立，可在“温度控制”页调整培养参数")
-        self.states_updated.emit()
-        return True
-
     def start_experiment(self):
-        if self.exp_state is not ExpState.CONNECTED or not self.exp_info.get("id"):
+        """启动培养（实验编号自动生成，无需手动配置实验信息）。"""
+        if self.exp_state not in (ExpState.CONNECTED, ExpState.FINISHED):
             return False
         # 新实验新数据：清空历史统计
         for d in self.history.values():
             d.clear()
         self.param_log.clear()
+        # 自动生成实验编号（每次启动为新实验，用于数据归档目录命名）
+        self.exp_info = {"id": self.next_exp_id(), "name": "", "operator": "", "remark": ""}
         # 快照启动时刻的培养参数（存入 experiment.json）
         self.exp_params = {
             "temp_target": self.temp_target,
@@ -180,21 +170,10 @@ class DeviceSimulator(QObject):
         self.raise_alarm(f"实验 {self.exp_info['id']} 已结束，数据已归档")
         return True
 
-    def reset_experiment(self):
-        """新建下一个实验：清空实验信息，回到已连接状态。"""
-        self.exp_info = {"id": "", "name": "", "operator": "", "remark": ""}
-        self.exp_params = {}
-        self.exp_started_at = None
-        self.exp_finished_at = None
-        self.paused_at = None
-        if self.exp_state is ExpState.FINISHED:
-            self._set_exp_state(ExpState.CONNECTED)
-        self.states_updated.emit()
-
     @property
     def unlocked(self):
-        """实验建立后即解锁各功能模块（无需等待启动）。"""
-        return bool(self.exp_info.get("id"))
+        """设备连接后即解锁各功能模块（无需配置实验）。"""
+        return self.exp_state is not ExpState.DISCONNECTED
 
     def exp_elapsed(self):
         if self.exp_started_at is None:
