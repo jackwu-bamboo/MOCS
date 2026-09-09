@@ -133,7 +133,6 @@ class MainWindow(QMainWindow):
         # 实验流程
         g_flow = SidebarGroup("实验流程")
         g_flow.add_button("设备连接", lambda: self._goto(PAGE_WORKFLOW))
-        g_flow.add_button("配置实验", lambda: self._goto(PAGE_WORKFLOW))
         sb.addWidget(g_flow)
 
         # 温度控制
