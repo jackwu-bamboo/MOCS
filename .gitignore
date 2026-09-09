@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.pyc
+
+# 运行期生成的实验数据
+exports/
+
+# 本地配置
+.devin/
+
+# 需求文档临时提取文件
+需求文档/extracted.txt
+
+# C# 工程（ThermostaticModule 自带 .gitignore 已排除 bin/obj/.vs）
+ThermostaticModule/packages/
+ThermostaticModule/.vscode/
