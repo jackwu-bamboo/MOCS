@@ -36,7 +36,7 @@ class ThermoModbusDriver(QObject):
     """温控模块串口驱动：自动扫描连接 + 温度轮询，全部在后台线程执行。"""
 
     state_changed = pyqtSignal(bool, str)   # (已连接, 串口名)
-    temperature_read = pyqtSignal(float, float)  # (顶盖℃, 盒体℃)
+    temperature_read = pyqtSignal(float)    # 盒体实测温度 ℃
     error = pyqtSignal(str)
 
     def __init__(self, baudrate=DEFAULT_BAUD, timeout=1.0, parent=None):
@@ -112,15 +112,15 @@ class ThermoModbusDriver(QObject):
                     return
             else:
                 fails = 0
-                self.temperature_read.emit(*temps)
+                self.temperature_read.emit(temps)
             self._stop.wait(POLL_INTERVAL)
 
     # ---- 数据读写 ----
     def read_temperature(self):
-        """读实测温度，返回 (顶盖℃, 盒体℃)；失败返回 None。
+        """读盒体实测温度（原始 ℃ 值），失败返回 None。
 
         实测寄存器布局（0xB020 起输入寄存器 FC04）：
-          0xB020 = 顶盖温度（系统未启动时为 0）
+          0xB020 = 顶盖温度（系统未启动时为 0，暂不使用）
           0xB021 = 盒体温度（原始 ℃ 值，真机观察 18~19 随环境波动）
         """
         with self._lock:
@@ -131,7 +131,7 @@ class ThermoModbusDriver(QObject):
                     TEMP_READ_ADDR, count=2, device_id=SERVER_ADDR)
                 if rr.isError() or len(rr.registers) < 2:
                     return None
-                return (rr.registers[0] / TEMP_SCALE, float(rr.registers[1]))
+                return float(rr.registers[1])
             except Exception:
                 return None
 
