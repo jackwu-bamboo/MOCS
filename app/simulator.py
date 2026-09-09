@@ -41,7 +41,6 @@ class DeviceSimulator(QObject):
 
         # 温度控制量
         self.temp_target = 37.0
-        self.temp_lower, self.temp_upper = 35.0, 39.0
         self.temp_current = 36.5
 
         # 设备连接：优先自动连接真实温控模块（Modbus RTU），失败可回退模拟模式
@@ -178,8 +177,6 @@ class DeviceSimulator(QObject):
         # 快照启动时刻的培养参数（存入 experiment.json）
         self.exp_params = {
             "temp_target": self.temp_target,
-            "temp_lower": self.temp_lower,
-            "temp_upper": self.temp_upper,
         }
         # 运行期数据落盘目录
         self.live_data_dir = os.path.join("exports", self.exp_info["id"], "data")
@@ -274,20 +271,14 @@ class DeviceSimulator(QObject):
                 pass
 
     # ---- 控制命令（真实模式经 Modbus 下发，模拟模式仅更新本地状态）----
-    def set_temp(self, target, lower, upper):
+    def set_temp(self, target):
         if self.real_mode:
             if not self.driver.write_temperature(target):
                 self.raise_alarm(f"温度设定写入设备失败: {target:.1f} ℃")
-        if self.exp_state is ExpState.RUNNING:
-            if abs(target - self.temp_target) > 1e-9:
-                self.log_param_change("温度目标", f"{self.temp_target:.1f} ℃", f"{target:.1f} ℃")
-            if abs(lower - self.temp_lower) > 1e-9 or abs(upper - self.temp_upper) > 1e-9:
-                self.log_param_change("温度范围",
-                                      f"{self.temp_lower:.1f}-{self.temp_upper:.1f} ℃",
-                                      f"{lower:.1f}-{upper:.1f} ℃")
+        if self.exp_state is ExpState.RUNNING and abs(target - self.temp_target) > 1e-9:
+            self.log_param_change("温度目标", f"{self.temp_target:.1f} ℃", f"{target:.1f} ℃")
         self.temp_target = target
-        self.temp_lower, self.temp_upper = lower, upper
-        self.raise_alarm(f"温度设定更新: 目标 {target:.1f} ℃, 范围 {lower:.1f}-{upper:.1f} ℃")
+        self.raise_alarm(f"温度设定更新: 目标 {target:.1f} ℃")
 
     # ---- 定时刷新 ----
     def _tick(self):

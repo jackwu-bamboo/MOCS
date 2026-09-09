@@ -1,4 +1,4 @@
-"""温度控制页：目标温度 / 控制范围设定与温度变化曲线。"""
+"""温度控制页：目标温度设定与温度变化曲线。"""
 from PyQt5.QtWidgets import (QDoubleSpinBox, QFormLayout, QHBoxLayout, QPushButton,
                              QVBoxLayout, QWidget)
 
@@ -20,15 +20,7 @@ class TemperaturePage(QWidget):
         self.sp_target.setRange(25.0, 45.0)
         self.sp_target.setDecimals(1)
         self.sp_target.setValue(sim.temp_target)
-        self.sp_low = QDoubleSpinBox()
-        self.sp_low.setRange(20.0, 45.0)
-        self.sp_low.setValue(sim.temp_lower)
-        self.sp_high = QDoubleSpinBox()
-        self.sp_high.setRange(25.0, 50.0)
-        self.sp_high.setValue(sim.temp_upper)
         form.addRow("目标温度 (℃)", self.sp_target)
-        form.addRow("控制下限 (℃)", self.sp_low)
-        form.addRow("控制上限 (℃)", self.sp_high)
         b_apply = QPushButton("应用设定")
         b_apply.clicked.connect(self._apply)
         form.addRow(b_apply)
@@ -52,7 +44,7 @@ class TemperaturePage(QWidget):
         self.refresh()
 
     def _apply(self):
-        self.sim.set_temp(self.sp_target.value(), self.sp_low.value(), self.sp_high.value())
+        self.sim.set_temp(self.sp_target.value())
 
     def refresh(self):
         self.temp_now.set_value(f"{self.sim.temp_current:.2f}")
