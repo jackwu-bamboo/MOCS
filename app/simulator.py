@@ -42,6 +42,7 @@ class DeviceSimulator(QObject):
         # 温度控制量
         self.temp_target = 37.0
         self.temp_current = 36.5
+        self.temp_lid = 0.0  # 顶盖温度（真实设备读数）
 
         # 设备连接：优先自动连接真实温控模块（Modbus RTU），失败可回退模拟模式
         self.real_mode = False
@@ -122,10 +123,11 @@ class DeviceSimulator(QObject):
         else:
             self.raise_alarm("未发现温控设备，请检查设备接线后点击“连接设备”重试")
 
-    def _on_device_temp(self, temp):
+    def _on_device_temp(self, lid, box):
         """真实设备温度读数（后台线程经信号队列进入 GUI 线程）。"""
         if self.real_mode:
-            self.temp_current = temp
+            self.temp_lid = lid
+            self.temp_current = box
             self.states_updated.emit()
 
     def _connect_simulated(self):

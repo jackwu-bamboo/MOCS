@@ -25,9 +25,11 @@ class TemperaturePage(QWidget):
         b_apply.clicked.connect(self._apply)
         form.addRow(b_apply)
         left.body.addLayout(form)
-        self.temp_now = ValueCard("当前温度", "℃")
+        self.temp_now = ValueCard("当前温度（盒体）", "℃")
+        self.temp_lid = ValueCard("顶盖温度", "℃")
         self.temp_goal = ValueCard("目标温度", "℃")
         left.body.addWidget(self.temp_now)
+        left.body.addWidget(self.temp_lid)
         left.body.addWidget(self.temp_goal)
         left.body.addStretch(1)
 
@@ -48,4 +50,5 @@ class TemperaturePage(QWidget):
 
     def refresh(self):
         self.temp_now.set_value(f"{self.sim.temp_current:.2f}")
+        self.temp_lid.set_value(f"{self.sim.temp_lid:.2f}")
         self.temp_goal.set_value(f"{self.sim.temp_target:.2f}")
