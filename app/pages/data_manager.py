@@ -10,8 +10,7 @@ from app.exporter import export_experiment
 from app.simulator import ExpState
 from app.widgets import Card
 
-DATA_TYPES = ["温度数据", "氧浓度数据", "微泵参数", "参数变更记录",
-              "电生理数据", "电化学数据", "TEER 数据", "图像数据"]
+DATA_TYPES = ["温度数据", "参数变更记录"]
 
 
 class DataManagerPage(QWidget):
@@ -72,13 +71,7 @@ class DataManagerPage(QWidget):
         running = sim.exp_state is ExpState.RUNNING
         counts = [
             len(sim.history["temp"]),
-            len(sim.history["o2"]),
-            len(sim.pump_log),
             len(sim.param_log),
-            sim.mea_frames,
-            len(sim.history["echem"]),
-            len(sim.history["teer"]),
-            sim.image_count,
         ]
         for i, (name, c) in enumerate(zip(DATA_TYPES, counts)):
             self._set(i, 0, name)

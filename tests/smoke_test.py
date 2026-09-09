@@ -1,4 +1,4 @@
-"""离屏冒烟测试：分组侧边栏导航 + 五状态实验流程 + 自动归档。"""
+"""离屏冒烟测试（精简版：仅温度控制）：流程状态机 + 参数日志 + 自动归档。"""
 import os
 import shutil
 import sys
@@ -37,7 +37,7 @@ def main():
     w = MainWindow()
     w.show()
 
-    assert w.pages.count() == 6, "应有 6 个页面"
+    assert w.pages.count() == 4, "应有 4 个页面（实验流程/运行/温度控制/数据管理）"
     assert w.pages.currentIndex() == PAGE_WORKFLOW
     assert_locked(w, locked=True)
 
@@ -52,17 +52,11 @@ def main():
     base = os.path.join("exports", exp_id)
     shutil.rmtree(base, ignore_errors=True)
 
-    # 配置实验（仅实验信息；培养参数在外设控制页调整）
+    # 配置实验（仅实验信息；温度参数在温度控制页调整）
     assert w.sim.create_experiment(exp_id, "测试实验", "tester", "smoke")
     pump_events(app, 0.2)
     assert w.btn_start.isEnabled(), "配置完成后侧边栏启动应可用"
     assert_locked(w, locked=False), "实验建立后各模块应解锁"
-
-    # 实验启动前即可操作检测模块（如开相机做位置对准）
-    w.sim.toggle_detection("相机")
-    pump_events(app, 1.5)
-    assert w.sim._frame is not None, "相机开启后应产生图像帧"
-    w.sim.toggle_detection("相机", False)
 
     # 启动（经侧边栏按钮，应跳转运行页）
     w.btn_start.click()
@@ -71,24 +65,17 @@ def main():
     pump_events(app, 1.0)
     assert_locked(w, locked=False)
 
-    # 暂停 → 环境冻结 → 继续
+    # 暂停 → 温度冻结 → 继续
     assert w.sim.pause_experiment()
     assert w.sim.exp_state is ExpState.PAUSED
     t0 = w.sim.temp_current
     pump_events(app, 0.4)
-    assert abs(w.sim.temp_current - t0) < 1e-9, "暂停应冻结环境"
+    assert abs(w.sim.temp_current - t0) < 1e-9, "暂停应冻结温度"
     assert w.btn_pause.text() == "继续"
     assert w.sim.resume_experiment()
     assert w.sim.exp_state is ExpState.RUNNING
 
-    # 在线检测按需启停
-    w.sim.toggle_detection("MEA")
-    frames0 = w.sim.mea_frames
-    pump_events(app, 0.5)
-    assert w.sim.mea_frames > frames0, "MEA 开启后应产生数据帧"
-    w.sim.toggle_detection("MEA", False)
-
-    # 运行中参数变更日志
+    # 运行中温度参数变更日志
     n0 = len(w.sim.param_log)
     w.sim.set_temp(38.0, 36.0, 40.0)
     assert len(w.sim.param_log) > n0
@@ -98,20 +85,18 @@ def main():
     w.sim.disconnect_all()
     assert w.sim.exp_state in (ExpState.RUNNING, ExpState.PAUSED)
 
-    # 结束 → 归档（页面保持解锁，便于导出数据/生成报告）
+    # 结束 → 归档（页面保持解锁，便于导出数据）
     w.sim.finish_experiment()
     assert w.sim.exp_state is ExpState.FINISHED
     pump_events(app, 0.3)
     assert_locked(w, locked=False)
     assert len(w.sim.experiments) == 1
-    assert not any(w.sim.detection_running.values())
     assert os.path.isfile(os.path.join(base, "experiment.json"))
-    env = os.path.join(base, "data", "environment.csv")
-    with open(env, encoding="utf-8-sig") as f:
-        assert sum(1 for _ in f) > 2
+    temp_csv = os.path.join(base, "data", "temperature.csv")
+    assert os.path.isfile(temp_csv), "温度数据应已落盘"
+    with open(temp_csv, encoding="utf-8-sig") as f:
+        assert sum(1 for _ in f) > 2, "temperature.csv 应有数据行"
     assert os.path.isfile(os.path.join(base, "data", "param_log.csv"))
-    assert os.path.isfile(os.path.join(base, "pumps.csv"))
-    assert os.path.isfile(os.path.join(base, "images.txt"))
 
     # 新建下一个实验（清空实验信息后重新锁定）
     w.sim.reset_experiment()

@@ -129,8 +129,7 @@ class WorkflowPage(QWidget):
         form.addRow("备注", self.ed_remark)
         self.step2.content_lay.addLayout(form)
 
-        note = QLabel("培养参数（温度 / 氧浓度 / 微泵 / 位置对准）在“外设控制”页调整；"
-                      "检测模块在实验启动后于运行页按需启停")
+        note = QLabel("培养参数（目标温度 / 控制范围）在“温度控制”页调整")
         note.setStyleSheet("color: #8fa8a4;")
         note.setWordWrap(True)
         self.step2.content_lay.addWidget(note)

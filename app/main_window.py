@@ -1,7 +1,7 @@
-"""主窗口：分组侧边栏（参考图样式）+ 页面栈 + 顶部状态栏。
+"""主窗口（精简版：仅温度控制）：分组侧边栏 + 页面栈 + 顶部状态栏。
 
-侧边栏分组：实验流程 / 外设控制 / 检测控制 / 运行 / 实时数据 / 数据。
-实验未启动（非运行/暂停）时，外设控制、检测控制、数据管理、损伤评价按钮禁用。
+侧边栏分组：实验流程 / 温度控制 / 运行 / 实时数据 / 数据。
+实验未建立时，温度控制、数据管理按钮禁用。
 """
 import time
 
@@ -10,16 +10,14 @@ from PyQt5.QtWidgets import (QFrame, QGridLayout, QHBoxLayout, QLabel, QMainWind
                              QMessageBox, QPushButton, QScrollArea, QStackedWidget,
                              QVBoxLayout, QWidget)
 
-from app.pages.control import ControlPage
 from app.pages.data_manager import DataManagerPage
-from app.pages.detection import DetectionPage
-from app.pages.evaluation import EvaluationPage
 from app.pages.run import RunPage
+from app.pages.temperature import TemperaturePage
 from app.pages.workflow import WorkflowPage
 from app.simulator import DeviceSimulator, ExpState
 
-PAGE_WORKFLOW, PAGE_RUN, PAGE_CONTROL, PAGE_DETECTION, PAGE_DATA, PAGE_EVAL = range(6)
-LOCKED_PAGES = {PAGE_CONTROL, PAGE_DETECTION, PAGE_DATA, PAGE_EVAL}
+PAGE_WORKFLOW, PAGE_RUN, PAGE_TEMP, PAGE_DATA = range(4)
+LOCKED_PAGES = {PAGE_TEMP, PAGE_DATA}
 
 
 class SidebarGroup(QFrame):
@@ -64,8 +62,8 @@ class SidebarGroup(QFrame):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("多器官芯片培养盒集成控制软件")
-        self.resize(1280, 800)
+        self.setWindowTitle("培养盒温度控制软件")
+        self.resize(1100, 720)
         self.sim = DeviceSimulator(self)
         self.rt_labels = {}
         self.lock_buttons = []
@@ -81,7 +79,7 @@ class MainWindow(QMainWindow):
         header.setFixedHeight(56)
         hl = QHBoxLayout(header)
         hl.setContentsMargins(16, 0, 16, 0)
-        title = QLabel("多器官芯片培养盒集成控制软件")
+        title = QLabel("培养盒温度控制软件")
         title.setObjectName("HeaderTitle")
         self.exp_state = QLabel()
         self.clock = QLabel()
@@ -99,12 +97,9 @@ class MainWindow(QMainWindow):
         self.pages = QStackedWidget()
         self.workflow_page = WorkflowPage(self.sim)
         self.run_page = RunPage(self.sim)
-        self.control_page = ControlPage(self.sim)
-        self.detection_page = DetectionPage(self.sim)
+        self.temp_page = TemperaturePage(self.sim)
         self.data_page = DataManagerPage(self.sim)
-        self.eval_page = EvaluationPage(self.sim)
-        for w in (self.workflow_page, self.run_page, self.control_page,
-                  self.detection_page, self.data_page, self.eval_page):
+        for w in (self.workflow_page, self.run_page, self.temp_page, self.data_page):
             self.pages.addWidget(w)
         self.pages.setCurrentIndex(PAGE_WORKFLOW)
         body.addWidget(self.pages, 1)
@@ -141,19 +136,11 @@ class MainWindow(QMainWindow):
         g_flow.add_button("配置实验", lambda: self._goto(PAGE_WORKFLOW))
         sb.addWidget(g_flow)
 
-        # 外设控制
-        g_periph = SidebarGroup("外设控制")
-        for text, tab in (("微泵控制", 0), ("温度控制", 1), ("氧浓度控制", 2), ("位置对准", 3)):
-            b = g_periph.add_button(text, lambda _, t=tab: self._goto(PAGE_CONTROL, t))
-            self.lock_buttons.append(b)
-        sb.addWidget(g_periph)
-
-        # 检测控制
-        g_det = SidebarGroup("检测控制")
-        for text, tab in (("电生理检测", 0), ("电化学检测", 1), ("TEER检测", 2), ("明场拍照", 3)):
-            b = g_det.add_button(text, lambda _, t=tab: self._goto(PAGE_DETECTION, t))
-            self.lock_buttons.append(b)
-        sb.addWidget(g_det)
+        # 温度控制
+        g_temp = SidebarGroup("温度控制")
+        self.lock_buttons.append(
+            g_temp.add_button("温度控制", lambda: self._goto(PAGE_TEMP)))
+        sb.addWidget(g_temp)
 
         # 运行
         g_run = SidebarGroup("运行")
@@ -165,8 +152,7 @@ class MainWindow(QMainWindow):
         # 实时数据
         g_rt = SidebarGroup("实时数据", cols=2)
         self.rt_labels = {}
-        for key, name in (("temp", "温度"), ("o2", "氧浓度"),
-                          ("elapsed", "运行时长"), ("state", "状态")):
+        for key, name in (("temp", "温度"), ("elapsed", "运行时长"), ("state", "状态")):
             box = QVBoxLayout()
             cap = QLabel(name)
             cap.setAlignment(Qt.AlignCenter)
@@ -184,7 +170,6 @@ class MainWindow(QMainWindow):
         # 数据
         g_data = SidebarGroup("数据")
         self.lock_buttons.append(g_data.add_button("数据管理", lambda: self._goto(PAGE_DATA)))
-        self.lock_buttons.append(g_data.add_button("损伤评价", lambda: self._goto(PAGE_EVAL)))
         sb.addWidget(g_data)
         sb.addStretch(1)
 
@@ -192,12 +177,8 @@ class MainWindow(QMainWindow):
         return scroll
 
     # ---- 导航与运行操作 ----
-    def _goto(self, page_idx, tab_idx=None):
+    def _goto(self, page_idx):
         self.pages.setCurrentIndex(page_idx)
-        if tab_idx is not None:
-            widget = self.pages.widget(page_idx)
-            if hasattr(widget, "tabs"):
-                widget.tabs.setCurrentIndex(tab_idx)
 
     def _start(self):
         if self.sim.start_experiment():
@@ -227,7 +208,6 @@ class MainWindow(QMainWindow):
     def _update_realtime(self):
         sim = self.sim
         self.rt_labels["temp"].setText(f"{sim.temp_current:.1f} ℃")
-        self.rt_labels["o2"].setText(f"{sim.o2_current:.1f} %")
         self.rt_labels["elapsed"].setText(sim.exp_elapsed())
         self.rt_labels["state"].setText(sim.exp_state.value)
 
@@ -240,7 +220,7 @@ class MainWindow(QMainWindow):
         # 未建立实验时若正停留在被锁页面则回到流程页
         if not self.sim.unlocked and self.pages.currentIndex() in LOCKED_PAGES:
             self._goto(PAGE_WORKFLOW)
-        # 结束实验自动归档完成后统一提示（避免流程页/数据页重复弹窗）
+        # 结束实验自动归档完成后统一提示
         if state is ExpState.FINISHED and self.sim.last_export_path:
             QMessageBox.information(
                 self, "实验已归档",

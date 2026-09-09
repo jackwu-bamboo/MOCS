@@ -1,11 +1,8 @@
-"""运行页：运行控制（启动/暂停/继续/结束）、实验信息、在线检测控制、
-设备状态、温/氧曲线、微泵状态、报警信息。"""
-from PyQt5.QtCore import Qt
-from PyQt5.QtWidgets import (QHBoxLayout, QHeaderView, QLabel, QListWidget,
-                             QPushButton, QTableWidget, QTableWidgetItem,
+"""运行页：运行控制（启动/暂停/继续/结束）、实验信息、温度曲线、报警信息。"""
+from PyQt5.QtWidgets import (QHBoxLayout, QLabel, QListWidget, QPushButton,
                              QVBoxLayout, QWidget)
 
-from app.simulator import DEVICE_NAMES, DETECTION_NAMES, ExpState
+from app.simulator import DEVICE_NAMES, ExpState
 from app.widgets import Card, CurvePlot, StatusCard
 
 
@@ -56,27 +53,6 @@ class RunPage(QWidget):
         info_card.body.addLayout(info_row)
         root.addWidget(info_card)
 
-        # 在线检测控制（实验运行中按需启停）
-        det_card = Card("在线检测控制")
-        det_row = QHBoxLayout()
-        self.det_btns = {}
-        for name in DETECTION_NAMES:
-            col = QVBoxLayout()
-            lbl = QLabel(name)
-            lbl.setAlignment(Qt.AlignCenter)
-            btn = QPushButton("启动")
-            btn.clicked.connect(lambda _, n=name: self.sim.toggle_detection(n))
-            col.addWidget(lbl)
-            col.addWidget(btn)
-            det_row.addLayout(col)
-            self.det_btns[name] = btn
-        det_row.addStretch(1)
-        self.rec_label = QLabel("")
-        self.rec_label.setStyleSheet("color: #8fa8a4;")
-        det_row.addWidget(self.rec_label)
-        det_card.body.addLayout(det_row)
-        root.addWidget(det_card)
-
         dev_row = QHBoxLayout()
         self.dev_cards = {}
         for name in DEVICE_NAMES:
@@ -89,37 +65,19 @@ class RunPage(QWidget):
         self.temp_plot = CurvePlot("温度 (℃)")
         self.temp_plot.add_series(sim.history["temp"], "#00e5c0", "当前")
         self.temp_plot.add_series(sim.history["temp_t"], "#ffb74d", "目标", dashed=True)
-        self.o2_plot = CurvePlot("氧浓度 (%)")
-        self.o2_plot.add_series(sim.history["o2"], "#64b5f6", "当前")
-        self.o2_plot.add_series(sim.history["o2_t"], "#ffb74d", "目标", dashed=True)
         temp_card = Card()
         temp_card.body.addWidget(self.temp_plot)
-        o2_card = Card()
-        o2_card.body.addWidget(self.o2_plot)
         mid.addWidget(temp_card, 1)
-        mid.addWidget(o2_card, 1)
-        root.addLayout(mid, 1)
-
-        bottom = QHBoxLayout()
-        pump_card = Card("微泵运行状态")
-        self.pump_table = QTableWidget(4, 4)
-        self.pump_table.setHorizontalHeaderLabels(["泵编号", "状态", "气压 (kPa)", "频率 (Hz)"])
-        self.pump_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        self.pump_table.verticalHeader().setVisible(False)
-        self.pump_table.setEditTriggers(QTableWidget.NoEditTriggers)
-        pump_card.body.addWidget(self.pump_table)
 
         alarm_card = Card("异常报警信息")
         self.alarm_list = QListWidget()
         self.alarm_list.setObjectName("AlarmList")
         alarm_card.body.addWidget(self.alarm_list)
-        bottom.addWidget(pump_card, 3)
-        bottom.addWidget(alarm_card, 2)
-        root.addLayout(bottom, 1)
+        mid.addWidget(alarm_card, 1)
+        root.addLayout(mid, 1)
 
         sim.states_updated.connect(self.refresh)
         sim.alarm_raised.connect(self.on_alarm)
-        sim.detection_toggled.connect(lambda *_: self.refresh())
         sim.exp_state_changed.connect(lambda *_: self.refresh())
         self.refresh()
 
@@ -140,30 +98,17 @@ class RunPage(QWidget):
         st = sim.exp_state
         # 运行控制按钮
         configured = bool(sim.exp_info.get("id"))
-        self.btn_start.setEnabled(
-            sim.exp_state is ExpState.CONNECTED and configured)
+        self.btn_start.setEnabled(sim.exp_state is ExpState.CONNECTED and configured)
         self.btn_pause.setText("继续" if st is ExpState.PAUSED else "暂停")
         self.btn_pause.setEnabled(st in (ExpState.RUNNING, ExpState.PAUSED))
         self.btn_finish.setEnabled(st in (ExpState.RUNNING, ExpState.PAUSED))
         if st is ExpState.RUNNING:
             self.run_hint.setText(f"运行中 {sim.exp_elapsed()}")
         elif st is ExpState.PAUSED:
-            self.run_hint.setText("已暂停，环境控制与数据记录冻结")
+            self.run_hint.setText("已暂停，温度控制与数据记录冻结")
         else:
             self.run_hint.setText("")
 
-        # 在线检测启停按钮（实验建立后即可操作）
-        active = sim.unlocked
-        for name, btn in self.det_btns.items():
-            on = sim.detection_running.get(name, False)
-            btn.setText("■ 停止" if on else "▶ 启动")
-            btn.setEnabled(active)
-        if sim.exp_state is ExpState.RUNNING:
-            self.rec_label.setText(f"数据落盘: {sim.live_data_dir}")
-        elif sim.unlocked:
-            self.rec_label.setText("实验未启动，环境数据暂不记录")
-        else:
-            self.rec_label.setText("未记录（实验未运行）")
         for name, card in self.dev_cards.items():
             card.set_state(sim.connected.get(name, False))
         info = sim.exp_info
@@ -177,12 +122,3 @@ class RunPage(QWidget):
             self.lbl_operator.setText("--")
         self.lbl_exp_state.setText(sim.exp_state.value)
         self.lbl_elapsed.setText(sim.exp_elapsed())
-        for i, p in enumerate(sim.pumps):
-            values = [str(p["id"]), "运行" if p["running"] else "停止",
-                      f"{p['pressure']:.2f}", f"{p['frequency']:.2f}"]
-            for j, v in enumerate(values):
-                it = self.pump_table.item(i, j)
-                if it is None:
-                    it = QTableWidgetItem()
-                    self.pump_table.setItem(i, j, it)
-                it.setText(v)
