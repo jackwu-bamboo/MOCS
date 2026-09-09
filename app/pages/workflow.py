@@ -118,7 +118,9 @@ class WorkflowPage(QWidget):
             card.set_state(sim.connected.get(name, False))
         self.btn_connect.setEnabled(not all_conn)
         self.btn_disconnect.setEnabled(all_conn and not running)
-        self.check_label.setText("设备已连接" if all_conn else "设备未连接")
+        self.check_label.setText(
+            f"已连接（{sim.connected_port}）" if sim.real_mode
+            else ("模拟模式" if all_conn else "设备未连接"))
 
         self.step1.set_status("done" if all_conn else "active")
 

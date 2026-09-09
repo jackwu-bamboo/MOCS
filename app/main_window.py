@@ -226,3 +226,8 @@ class MainWindow(QMainWindow):
 
     def _tick_clock(self):
         self.clock.setText(time.strftime("%Y-%m-%d %H:%M:%S"))
+
+    def closeEvent(self, event):
+        # 退出时关闭串口与轮询线程
+        self.sim.shutdown()
+        super().closeEvent(event)

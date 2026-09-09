@@ -1,7 +1,8 @@
-"""设备模拟器（精简版）：仅提供温控模块的仿真数据源。
+"""温控模块设备层：真实 Modbus RTU 驱动 + 模拟仿真双模式。
 
-接入真实硬件时，用基于 pymodbus / pyserial 的驱动类替换本模块，
-并保持相同的信号接口（states_updated / alarm_raised / exp_state_changed）。
+自动连接流程参考 ThermostaticModule C# Demo：
+应用启动即后台扫描串口，读 0x701 校验值匹配 0x0F0F（从站 0x42）即连接成功；
+未发现设备时可回退模拟模式。真实模式下温度读数/设定/系统开关均走 Modbus 寄存器。
 """
 import csv
 import os
@@ -13,6 +14,7 @@ from enum import Enum
 from PyQt5.QtCore import QObject, QTimer, pyqtSignal
 
 from app.exporter import export_experiment
+from app.thermo_device import ThermoModbusDriver
 
 DEVICE_NAMES = ["温控模块"]
 
@@ -42,6 +44,10 @@ class DeviceSimulator(QObject):
         self.temp_lower, self.temp_upper = 35.0, 39.0
         self.temp_current = 36.5
 
+        # 设备连接：优先自动连接真实温控模块（Modbus RTU），失败可回退模拟模式
+        self.real_mode = False
+        self.connected_port = ""
+
         self.alarms = deque(maxlen=50)
         self.param_log = deque(maxlen=500)
         self.history = {
@@ -63,16 +69,90 @@ class DeviceSimulator(QObject):
         self._temp_csv = None
         self._param_log_path = None
 
+        # 温控模块驱动：启动即自动扫描串口（参考 ThermostaticModule 的连接流程）
+        self.real_mode = False
+        self.connected_port = ""
+        self._scan_fallback = False
+        self.driver = ThermoModbusDriver(self)
+        self.driver.state_changed.connect(self._on_device_state)
+        self.driver.temperature_read.connect(self._on_device_temp)
+        self.driver.start_scan()
+
+        self.timer = QTimer(self)
+        self.timer.setInterval(int(HISTORY_INTERVAL * 1000))
+        self.timer.timeout.connect(self._tick)
+
+        # 运行期数据落盘
+        self.live_data_dir = None
+        self._temp_csv = None
+        self._param_log_path = None
+
+        # 温控模块驱动：启动即自动扫描串口连接（参照 ThermostaticModule）；
+        # 未发现真实设备时可回退模拟模式
+        self.real_mode = False
+        self.connected_port = ""
+        self._scan_fallback = False
+        self.driver = ThermoModbusDriver(self)
+        self.driver.state_changed.connect(self._on_device_state)
+        self.driver.temperature_read.connect(self._on_device_temp)
+        self.driver.error.connect(lambda m: self.raise_alarm(f"温控模块通信错误: {m}"))
+        self.driver.start_scan()
+
         self.timer = QTimer(self)
         self.timer.setInterval(int(HISTORY_INTERVAL * 1000))
         self.timer.timeout.connect(self._tick)
 
     # ---- 连接管理 ----
     def connect_all(self):
+        """连接设备：优先使用已连接的真实设备；否则后台扫描串口，失败则进入模拟模式。"""
+        if self.driver.is_connected:
+            self._connect_real()
+            return
+        self._scan_fallback = True
+        self.raise_alarm("正在自动扫描串口连接温控模块...")
+        self.driver.start_scan()
+
+    def _on_device_state(self, connected, port):
+        if connected:
+            self.connected["温控模块"] = True
+            self.real_mode = True
+            self.connected_port = port
+            self.timer.start()
+            self.raise_alarm(f"温控模块连接成功（{port}，Modbus RTU 0x42）")
+            if self.exp_state is ExpState.DISCONNECTED:
+                self._set_exp_state(ExpState.CONNECTED)
+            return
+        # 断开或扫描失败
+        if self.real_mode or self.connected.get("温控模块"):
+            self.real_mode = False
+            self.connected["温控模块"] = False
+            self.connected_port = ""
+            if self.exp_state in (ExpState.RUNNING, ExpState.PAUSED):
+                self.raise_alarm("温控模块连接断开，实验自动暂停")
+                self.pause_experiment()
+            elif self.exp_state is ExpState.CONNECTED:
+                self.timer.stop()
+                self._set_exp_state(ExpState.DISCONNECTED)
+                self.raise_alarm("温控模块连接已断开")
+        elif self._scan_fallback:
+            self._scan_fallback = False
+            self.raise_alarm("未发现温控设备，已进入模拟模式")
+            self._connect_simulated()
+        else:
+            self.raise_alarm("未发现温控设备，请检查设备接线后点击“连接设备”重试")
+
+    def _on_device_temp(self, temp):
+        """真实设备温度读数（后台线程经信号队列进入 GUI 线程）。"""
+        if self.real_mode:
+            self.temp_current = temp
+            self.states_updated.emit()
+
+    def _connect_simulated(self):
         for name in self.connected:
             self.connected[name] = True
+        self.real_mode = False
         self.timer.start()
-        self.raise_alarm("温控模块连接成功")
+        self.raise_alarm("模拟模式：温度数据由仿真生成")
         self._set_exp_state(ExpState.CONNECTED)
 
     def disconnect_all(self):
@@ -82,8 +162,14 @@ class DeviceSimulator(QObject):
         for name in self.connected:
             self.connected[name] = False
         self.timer.stop()
+        if self.real_mode:
+            self.driver.disconnect()
         self.raise_alarm("已断开设备连接")
         self._set_exp_state(ExpState.DISCONNECTED)
+
+    def shutdown(self):
+        """退出程序时关闭串口。"""
+        self.driver.shutdown()
 
     def _set_exp_state(self, state):
         if self.exp_state is not state:
@@ -125,6 +211,9 @@ class DeviceSimulator(QObject):
         self.exp_started_at = time.time()
         self.exp_finished_at = None
         self.paused_at = None
+        # 真实设备：写入系统总开关（对应 C# Demo 的 SystemSwitch(1)）
+        if self.real_mode and not self.driver.write_system_switch(True):
+            self.raise_alarm("系统总开关写入失败，请检查设备连接")
         self._set_exp_state(ExpState.RUNNING)
         self.raise_alarm(f"实验 {self.exp_info['id']} 启动，温度数据自动落盘至 {self.live_data_dir}")
         return True
@@ -166,6 +255,10 @@ class DeviceSimulator(QObject):
         })
         # 自动归档
         self.last_export_path = export_experiment(self)
+        if self.real_mode:
+            # 真实设备：关闭系统总开关（安全停机）
+            if not self.driver.write_system_switch(False):
+                self.raise_alarm("系统总开关写入失败，请手动确认设备已停止")
         self._set_exp_state(ExpState.FINISHED)
         self.raise_alarm(f"实验 {self.exp_info['id']} 已结束，数据已归档")
         return True
@@ -198,8 +291,11 @@ class DeviceSimulator(QObject):
             except OSError:
                 pass
 
-    # ---- 控制命令（后续替换为 Modbus / 串口指令）----
+    # ---- 控制命令（真实模式经 Modbus 下发，模拟模式仅更新本地状态）----
     def set_temp(self, target, lower, upper):
+        if self.real_mode:
+            if not self.driver.write_temperature(target):
+                self.raise_alarm(f"温度设定写入设备失败: {target:.1f} ℃")
         if self.exp_state is ExpState.RUNNING:
             if abs(target - self.temp_target) > 1e-9:
                 self.log_param_change("温度目标", f"{self.temp_target:.1f} ℃", f"{target:.1f} ℃")
@@ -213,9 +309,11 @@ class DeviceSimulator(QObject):
 
     # ---- 定时刷新 ----
     def _tick(self):
-        self.temp_current += (self.temp_target - self.temp_current) * 0.06 + random.uniform(-0.03, 0.03)
-        if abs(self.temp_current - self.temp_target) > 0.8:
-            self.raise_alarm(f"温度偏差过大: {self.temp_current:.2f} ℃ (目标 {self.temp_target:.1f} ℃)")
+        if not self.real_mode:
+            # 模拟模式：温度向目标值一阶趋近 + 噪声；真实模式由设备读数驱动
+            self.temp_current += (self.temp_target - self.temp_current) * 0.06 + random.uniform(-0.03, 0.03)
+            if abs(self.temp_current - self.temp_target) > 0.8:
+                self.raise_alarm(f"温度偏差过大: {self.temp_current:.2f} ℃ (目标 {self.temp_target:.1f} ℃)")
         h = self.history
         h["temp"].append(self.temp_current)
         h["temp_t"].append(self.temp_target)
