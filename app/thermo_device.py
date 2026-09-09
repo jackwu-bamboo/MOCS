@@ -82,6 +82,12 @@ class ThermoModbusDriver(QObject):
             client = ModbusSerialClient(port=port, baudrate=self.baudrate, timeout=self.timeout)
             if not client.connect():
                 return False
+            # 握手：写校验值 0x0F0F 到 0x701 并回读验证（对应 C# Parameter 的
+            # CheckAddress/CheckValue 机制，等价于 createModbus + ConnectState）
+            wr = client.write_register(CHECK_ADDR, CHECK_VALUE, device_id=SERVER_ADDR)
+            if wr.isError():
+                client.close()
+                return False
             rr = client.read_holding_registers(CHECK_ADDR, count=1, device_id=SERVER_ADDR)
             if not rr.isError() and rr.registers and rr.registers[0] == CHECK_VALUE:
                 with self._lock:
@@ -97,7 +103,7 @@ class ThermoModbusDriver(QObject):
         """连接成功后的温度轮询（对应 C# Demo 的 PressureTimer_Tick）。"""
         fails = 0
         while not self._stop.is_set():
-            temp = self._read_temperature()
+            temp = self.read_temperature()
             if temp is None:
                 fails += 1
                 if fails >= MAX_FAILS:
