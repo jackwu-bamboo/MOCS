@@ -144,7 +144,7 @@ class MainWindow(QMainWindow):
         # 运行
         g_run = SidebarGroup("运行")
         self.btn_start = g_run.add_button("启动", self._toggle_run)
-        self.btn_pause = g_run.add_button("暂停", self._toggle_pause)
+        self.btn_stop = g_run.add_button("停止", self.sim.finish_experiment)
         sb.addWidget(g_run)
 
         # 实时数据
@@ -179,18 +179,9 @@ class MainWindow(QMainWindow):
         self.pages.setCurrentIndex(page_idx)
 
     def _toggle_run(self):
-        """启动/停止切换：空闲时启动培养，运行或暂停时结束实验（自动归档）。"""
-        if self.sim.exp_state in (ExpState.RUNNING, ExpState.PAUSED):
-            self.sim.finish_experiment()
-        else:
-            if self.sim.start_experiment():
-                self._goto(PAGE_RUN)
-
-    def _toggle_pause(self):
-        if self.sim.exp_state is ExpState.PAUSED:
-            self.sim.resume_experiment()
-        else:
-            self.sim.pause_experiment()
+        """空闲时启动培养。"""
+        if self.sim.start_experiment():
+            self._goto(PAGE_RUN)
 
     # ---- 状态刷新 ----
     def _apply_locks(self):
@@ -201,10 +192,8 @@ class MainWindow(QMainWindow):
 
     def _update_run_buttons(self):
         st = self.sim.exp_state
-        self.btn_start.setText("停止" if st in (ExpState.RUNNING, ExpState.PAUSED) else "启动")
-        self.btn_start.setEnabled(st in (ExpState.CONNECTED, ExpState.RUNNING, ExpState.PAUSED))
-        self.btn_pause.setText("继续" if st is ExpState.PAUSED else "暂停")
-        self.btn_pause.setEnabled(st is ExpState.RUNNING)
+        self.btn_start.setEnabled(st is ExpState.CONNECTED)
+        self.btn_stop.setEnabled(st is ExpState.RUNNING)
 
     def _update_realtime(self):
         sim = self.sim

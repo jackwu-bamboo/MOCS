@@ -142,18 +142,20 @@ class CurvePlot(QWidget):
         p.setPen(QPen(QColor(DIM)))
         p.drawText(QRect(2, t, l - 6, 20), Qt.AlignRight | Qt.AlignVCenter, f"{hi:.1f}")
         p.drawText(QRect(2, h - b - 20, l - 6, 20), Qt.AlignRight | Qt.AlignVCenter, f"{lo:.1f}")
+        # 图例 + 各序列最新值
         x = w - r
         for d, color, label, dashed in reversed(self.series):
             if not label:
                 continue
-            tw = fm.horizontalAdvance(label)
+            text = f"{label} {d[-1]:.1f}" if len(d) else label
+            tw = fm.horizontalAdvance(text)
             pen = QPen(color, 2)
             if dashed:
                 pen.setStyle(Qt.DashLine)
             p.setPen(pen)
             p.drawLine(x - tw - 18, t - 8, x - tw - 6, t - 8)
             p.setPen(QPen(QColor(DIM)))
-            p.drawText(x - tw, t - 4, label)
+            p.drawText(x - tw, t - 4, text)
             x -= tw + 28
 
 

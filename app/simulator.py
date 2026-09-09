@@ -22,11 +22,10 @@ HISTORY_INTERVAL = 0.2  # 慢变量历史采样间隔 s
 
 
 class ExpState(Enum):
-    """实验状态机：未连接 → 已连接 → 运行中 ⇄ 已暂停 → 已结束。"""
+    """实验状态机：未连接 → 已连接 → 运行中 → 已结束。"""
     DISCONNECTED = "未连接"
     CONNECTED = "已连接"
     RUNNING = "运行中"
-    PAUSED = "已暂停"
     FINISHED = "已结束"
 
 
@@ -59,7 +58,6 @@ class DeviceSimulator(QObject):
         self.exp_params = {}
         self.exp_started_at = None
         self.exp_finished_at = None
-        self.paused_at = None
         self.experiments = []  # 已结束实验记录
         self.last_export_path = None
 
@@ -108,9 +106,9 @@ class DeviceSimulator(QObject):
             self.real_mode = False
             self.connected["温控模块"] = False
             self.connected_port = ""
-            if self.exp_state in (ExpState.RUNNING, ExpState.PAUSED):
-                self.raise_alarm("温控模块连接断开，实验自动暂停")
-                self.pause_experiment()
+            if self.exp_state is ExpState.RUNNING:
+                self.raise_alarm("温控模块连接断开，实验自动停止")
+                self.finish_experiment()
             elif self.exp_state is ExpState.CONNECTED:
                 self.timer.stop()
                 self._set_exp_state(ExpState.DISCONNECTED)
@@ -137,7 +135,7 @@ class DeviceSimulator(QObject):
         self._set_exp_state(ExpState.CONNECTED)
 
     def disconnect_all(self):
-        if self.exp_state in (ExpState.RUNNING, ExpState.PAUSED):
+        if self.exp_state is ExpState.RUNNING:
             self.raise_alarm("实验尚未结束，禁止断开设备；请先结束实验")
             return
         for name in self.connected:
@@ -189,7 +187,6 @@ class DeviceSimulator(QObject):
             csv.writer(f).writerow(["time", "param", "old", "new"])
         self.exp_started_at = time.time()
         self.exp_finished_at = None
-        self.paused_at = None
         # 真实设备：写入系统总开关（对应 C# Demo 的 SystemSwitch(1)）
         if self.real_mode and not self.driver.write_system_switch(True):
             self.raise_alarm("系统总开关写入失败，请检查设备连接")
@@ -197,33 +194,9 @@ class DeviceSimulator(QObject):
         self.raise_alarm(f"实验 {self.exp_info['id']} 启动，温度数据自动落盘至 {self.live_data_dir}")
         return True
 
-    def pause_experiment(self):
-        """暂停实验：温控与数据记录冻结，恢复时补偿运行时长。"""
+    def finish_experiment(self):
         if self.exp_state is not ExpState.RUNNING:
             return False
-        self.paused_at = time.time()
-        self.timer.stop()
-        self._set_exp_state(ExpState.PAUSED)
-        self.raise_alarm("实验已暂停：温度控制与数据记录暂停")
-        return True
-
-    def resume_experiment(self):
-        if self.exp_state is not ExpState.PAUSED:
-            return False
-        if self.paused_at:
-            self.exp_started_at += time.time() - self.paused_at
-            self.paused_at = None
-        self.timer.start()
-        self._set_exp_state(ExpState.RUNNING)
-        self.raise_alarm("实验继续运行")
-        return True
-
-    def finish_experiment(self):
-        if self.exp_state not in (ExpState.RUNNING, ExpState.PAUSED):
-            return False
-        if self.paused_at:
-            self.exp_started_at += time.time() - self.paused_at
-            self.paused_at = None
         self.exp_finished_at = time.time()
         self.experiments.append({
             "id": self.exp_info["id"],
@@ -250,7 +223,7 @@ class DeviceSimulator(QObject):
     def exp_elapsed(self):
         if self.exp_started_at is None:
             return "--:--:--"
-        end = self.exp_finished_at or self.paused_at or time.time()
+        end = self.exp_finished_at or time.time()
         s = int(end - self.exp_started_at)
         return f"{s // 3600:02d}:{s % 3600 // 60:02d}:{s % 60:02d}"
 

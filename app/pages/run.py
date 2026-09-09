@@ -20,9 +20,9 @@ class RunPage(QWidget):
         self.btn_start = QPushButton("启动")
         self.btn_start.setObjectName("StartButton")
         self.btn_start.clicked.connect(self._toggle_run)
-        self.btn_pause = QPushButton("暂停")
-        self.btn_pause.clicked.connect(self._toggle_pause)
-        for b in (self.btn_start, self.btn_pause):
+        self.btn_stop = QPushButton("停止")
+        self.btn_stop.clicked.connect(self.sim.finish_experiment)
+        for b in (self.btn_start, self.btn_stop):
             run_row.addWidget(b)
         run_row.addStretch(1)
         self.run_hint = QLabel("")
@@ -77,25 +77,8 @@ class RunPage(QWidget):
         self.refresh()
 
     def _toggle_run(self):
-        """启动/停止切换：空闲时启动培养，运行或暂停时结束实验（自动归档）。"""
-        if self.sim.exp_state in (ExpState.RUNNING, ExpState.PAUSED):
-            self.sim.finish_experiment()
-        else:
-            if self.sim.start_experiment():
-                self._goto_run()
-
-    def _toggle_run(self):
-        """启动/停止切换：空闲时启动培养，运行或暂停时结束实验（自动归档）。"""
-        if self.sim.exp_state in (ExpState.RUNNING, ExpState.PAUSED):
-            self.sim.finish_experiment()
-        else:
-            self.sim.start_experiment()
-
-    def _toggle_pause(self):
-        if self.sim.exp_state is ExpState.PAUSED:
-            self.sim.resume_experiment()
-        else:
-            self.sim.pause_experiment()
+        """空闲时启动培养。"""
+        self.sim.start_experiment()
 
     def on_alarm(self, msg):
         ts, _ = self.sim.alarms[0]
@@ -106,15 +89,11 @@ class RunPage(QWidget):
     def refresh(self):
         sim = self.sim
         st = sim.exp_state
-        # 运行控制按钮：启动/停止切换 + 暂停/继续
-        self.btn_start.setEnabled(st in (ExpState.CONNECTED, ExpState.RUNNING, ExpState.PAUSED))
-        self.btn_start.setText("停止" if st in (ExpState.RUNNING, ExpState.PAUSED) else "启动")
-        self.btn_pause.setText("继续" if st is ExpState.PAUSED else "暂停")
-        self.btn_pause.setEnabled(st is ExpState.RUNNING)
+        # 运行控制按钮：启动（空闲）/ 停止（运行中）
+        self.btn_start.setEnabled(st is ExpState.CONNECTED)
+        self.btn_stop.setEnabled(st is ExpState.RUNNING)
         if st is ExpState.RUNNING:
             self.run_hint.setText(f"运行中 {sim.exp_elapsed()}")
-        elif st is ExpState.PAUSED:
-            self.run_hint.setText("已暂停，温度控制与数据记录冻结")
         else:
             self.run_hint.setText("")
 

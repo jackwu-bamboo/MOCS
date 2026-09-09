@@ -1,6 +1,6 @@
 """实验流程页：设备连接。
 
-培养参数在"温度控制"页调整；启动/暂停/结束操作在侧边栏"运行"组与运行页执行。
+培养参数在"温度控制"页调整；启动/停止操作在侧边栏"运行"组与运行页执行。
 实验编号在启动时自动生成，无需手动配置实验信息。
 """
 import time
@@ -111,7 +111,7 @@ class WorkflowPage(QWidget):
         sim = self.sim
         st = sim.exp_state
         all_conn = all(sim.connected.values())
-        running = st in (ExpState.RUNNING, ExpState.PAUSED)
+        running = st is ExpState.RUNNING
         finished = st is ExpState.FINISHED
 
         for name, card in self.dev_cards.items():
