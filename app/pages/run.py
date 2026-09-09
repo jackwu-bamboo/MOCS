@@ -17,14 +17,12 @@ class RunPage(QWidget):
         # 运行控制条（与侧边栏运行组按钮同步，状态驱动可用性）
         run_card = Card("运行控制")
         run_row = QHBoxLayout()
-        self.btn_start = QPushButton("启动培养")
+        self.btn_start = QPushButton("启动")
         self.btn_start.setObjectName("StartButton")
-        self.btn_start.clicked.connect(self.sim.start_experiment)
+        self.btn_start.clicked.connect(self._toggle_run)
         self.btn_pause = QPushButton("暂停")
         self.btn_pause.clicked.connect(self._toggle_pause)
-        self.btn_finish = QPushButton("结束实验")
-        self.btn_finish.clicked.connect(self.sim.finish_experiment)
-        for b in (self.btn_start, self.btn_pause, self.btn_finish):
+        for b in (self.btn_start, self.btn_pause):
             run_row.addWidget(b)
         run_row.addStretch(1)
         self.run_hint = QLabel("")
@@ -78,6 +76,21 @@ class RunPage(QWidget):
         sim.exp_state_changed.connect(lambda *_: self.refresh())
         self.refresh()
 
+    def _toggle_run(self):
+        """启动/停止切换：空闲时启动培养，运行或暂停时结束实验（自动归档）。"""
+        if self.sim.exp_state in (ExpState.RUNNING, ExpState.PAUSED):
+            self.sim.finish_experiment()
+        else:
+            if self.sim.start_experiment():
+                self._goto_run()
+
+    def _toggle_run(self):
+        """启动/停止切换：空闲时启动培养，运行或暂停时结束实验（自动归档）。"""
+        if self.sim.exp_state in (ExpState.RUNNING, ExpState.PAUSED):
+            self.sim.finish_experiment()
+        else:
+            self.sim.start_experiment()
+
     def _toggle_pause(self):
         if self.sim.exp_state is ExpState.PAUSED:
             self.sim.resume_experiment()
@@ -93,11 +106,11 @@ class RunPage(QWidget):
     def refresh(self):
         sim = self.sim
         st = sim.exp_state
-        # 运行控制按钮（连接后即可启动；结束后可再次启动新实验）
-        self.btn_start.setEnabled(st in (ExpState.CONNECTED, ExpState.FINISHED))
+        # 运行控制按钮：启动/停止切换 + 暂停/继续
+        self.btn_start.setEnabled(st in (ExpState.CONNECTED, ExpState.RUNNING, ExpState.PAUSED))
+        self.btn_start.setText("停止" if st in (ExpState.RUNNING, ExpState.PAUSED) else "启动")
         self.btn_pause.setText("继续" if st is ExpState.PAUSED else "暂停")
-        self.btn_pause.setEnabled(st in (ExpState.RUNNING, ExpState.PAUSED))
-        self.btn_finish.setEnabled(st in (ExpState.RUNNING, ExpState.PAUSED))
+        self.btn_pause.setEnabled(st is ExpState.RUNNING)
         if st is ExpState.RUNNING:
             self.run_hint.setText(f"运行中 {sim.exp_elapsed()}")
         elif st is ExpState.PAUSED:
