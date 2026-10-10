@@ -2,7 +2,7 @@
 
 连接流程与 ThermostaticModule C# Demo 保持一致：
   1. 枚举本机串口，逐个以 RTU 模式打开；
-  2. 读保持寄存器 0x701（CheckAddress），值等于 0x0F0F（CheckValue）即认定
+  2. 读输入寄存器 0x701（CheckAddress，FC04），值等于 0x0F0F（CheckValue）即认定
      找到设备（从站地址 0x42），等价于 C# Demo 的 createModbus + ConnectState；
   3. 连接成功后启动轮询线程，每 2s 读取实测温度（对应 C# pressureTimer）。
 
@@ -10,7 +10,7 @@
   0xB000 系统总开关（写线圈 0/1）
   0xB010 温度设定（保持寄存器，值 = ℃ × 10，范围 0~100 ℃）
   0xB020 温度读取（传感器寄存器，值 = ℃ × 10）
-  0x701  连接校验（保持寄存器，应读到 0x0F0F）
+  0x701  连接校验（输入寄存器 FC04，应读到 0x0F0F）
 
 接入真实设备后，设备会在串口上持续推送测量数据帧（非 Modbus 报文），
 pymodbus 每次发送请求前会丢弃缓冲区中的残留流数据并打印告警——属正常现象，
@@ -36,6 +36,7 @@ TEMP_SCALE = 10.0
 DEFAULT_BAUD = 115200
 POLL_INTERVAL = 2.0   # 温度轮询周期 s（与 C# Demo pressureTimer 一致）
 MAX_FAILS = 3         # 连续读取失败次数达到后判定断开
+SCAN_DELAY = 2.0      # 软件启动后延迟开始扫描连接的时间 s
 
 
 class ThermoModbusDriver(QObject):
@@ -74,6 +75,9 @@ class ThermoModbusDriver(QObject):
         self._scan_thread.start()
 
     def _scan_and_poll(self):
+        # 软件启动后延迟 2s 再开始扫描连接（期间请求停止则直接退出）
+        if self._stop.wait(SCAN_DELAY):
+            return
         for port in [p.device for p in list_ports.comports()]:
             if self._stop.is_set():
                 return
@@ -88,13 +92,19 @@ class ThermoModbusDriver(QObject):
             client = ModbusSerialClient(port=port, baudrate=self.baudrate, timeout=self.timeout)
             if not client.connect():
                 return False
-            # 握手：写校验值 0x0F0F 到 0x701 并回读验证（对应 C# Parameter 的
-            # CheckAddress/CheckValue 机制，等价于 createModbus + ConnectState）
-            wr = client.write_register(CHECK_ADDR, CHECK_VALUE, device_id=SERVER_ADDR)
-            if wr.isError():
-                client.close()
-                return False
-            rr = client.read_holding_registers(CHECK_ADDR, count=1, device_id=SERVER_ADDR)
+            # Modbus RTU 半双工无需任何流控：显式关闭软/硬流控并释放 RTS/DTR 线路。
+            # pyserial 打开串口时默认拉高 RTS/DTR，若 RS485 适配器用 RTS 做收发
+            # 方向控制，RTS 常高会使适配器停留在发送态、接收器关闭——表现为
+            # 发得出去、收不到应答（与 C# Demo 抓包中 RTS/DTR=DISABLE 不一致）。
+            sp = client.socket
+            sp.xonxoff = False
+            sp.rtscts = False
+            sp.dsrdtr = False
+            sp.dtr = False
+            sp.rts = False
+            # 握手：FC04 读 0x701，值等于 0x0F0F 即认定找到设备（与 0xB020 温度
+            # 读取同为输入寄存器 FC04；设备对 FC06 写 0x701 不响应，不能先写后读）
+            rr = client.read_input_registers(CHECK_ADDR, count=1, device_id=SERVER_ADDR)
             if not rr.isError() and rr.registers and rr.registers[0] == CHECK_VALUE:
                 with self._lock:
                     self._client = client
