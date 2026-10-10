@@ -41,6 +41,7 @@ class DeviceSimulator(QObject):
         # 温度控制量
         self.temp_target = 37.0
         self.temp_current = 36.5
+        self._dev_alarming = False   # 偏差告警边沿触发标志
 
         # 设备连接：优先自动连接真实温控模块（Modbus RTU），失败可回退模拟模式
         self.real_mode = False
@@ -106,12 +107,15 @@ class DeviceSimulator(QObject):
             self.real_mode = False
             self.connected["温控模块"] = False
             self.connected_port = ""
+            # 真实会话结束：一律停表，禁止模拟趋近数据继续填充曲线
+            self.timer.stop()
             if self.exp_state is ExpState.RUNNING:
                 self.raise_alarm("温控模块连接断开，实验自动停止")
                 self.finish_experiment()
             elif self.exp_state is ExpState.CONNECTED:
-                self.timer.stop()
                 self._set_exp_state(ExpState.DISCONNECTED)
+                self.raise_alarm("温控模块连接已断开")
+            else:
                 self.raise_alarm("温控模块连接已断开")
         elif self._scan_fallback:
             self._scan_fallback = False
@@ -258,8 +262,10 @@ class DeviceSimulator(QObject):
         if not self.real_mode:
             # 模拟模式：温度向目标值一阶趋近 + 噪声；真实模式由设备读数驱动
             self.temp_current += (self.temp_target - self.temp_current) * 0.06 + random.uniform(-0.03, 0.03)
-            if abs(self.temp_current - self.temp_target) > 0.8:
+            deviating = abs(self.temp_current - self.temp_target) > 0.8
+            if deviating and not self._dev_alarming:
                 self.raise_alarm(f"温度偏差过大: {self.temp_current:.2f} ℃ (目标 {self.temp_target:.1f} ℃)")
+            self._dev_alarming = deviating
         h = self.history
         h["temp"].append(self.temp_current)
         h["temp_t"].append(self.temp_target)

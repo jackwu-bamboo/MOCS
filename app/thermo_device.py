@@ -21,6 +21,7 @@ import logging
 logging.getLogger("pymodbus").setLevel(logging.ERROR)
 
 import threading
+import time
 
 from PyQt5.QtCore import QObject, pyqtSignal
 from serial.tools import list_ports
@@ -87,6 +88,47 @@ class ThermoModbusDriver(QObject):
                 return
         self.state_changed.emit(False, "")
 
+    @staticmethod
+    def _crc16(data: bytes) -> bytes:
+        """Modbus RTU CRC16，线上低字节在前。"""
+        crc = 0xFFFF
+        for b in data:
+            crc ^= b
+            for _ in range(8):
+                crc = (crc >> 1) ^ 0xA001 if crc & 1 else crc >> 1
+        return crc.to_bytes(2, "little")
+
+    def _raw_transaction(self, sp, pdu: bytes, resp_fc: int, resp_len: int, timeout=0.8):
+        """发送原始 RTU 报文，并在推流噪声中扫描匹配的应答帧。
+
+        pymodbus 的 RTU 解帧器命中一帧（含被跳过的推流帧）时按整段缓冲区长度
+        消费数据，应答帧前面若有推流帧，应答会被当垃圾一起丢掉——加热推流期间
+        读数因此长时间失败。这里直接走 pyserial：清空缓冲→发送→按
+        (从站地址+功能码+帧长+CRC) 逐字节扫描应答，未匹配字节保留继续等待，
+        直到超时。返回完整应答帧（含 addr/fc/CRC），失败返回 None。
+        """
+        try:
+            frame = bytes([SERVER_ADDR]) + pdu
+            frame += self._crc16(frame)
+            sp.reset_input_buffer()
+            sp.write(frame)
+            deadline = time.monotonic() + timeout
+            buf = bytearray()
+            while time.monotonic() < deadline:
+                n = sp.in_waiting
+                chunk = sp.read(n if n else 1)
+                if chunk:
+                    buf += chunk
+                for i in range(0, len(buf) - resp_len + 1):
+                    if buf[i] != SERVER_ADDR or buf[i + 1] != resp_fc:
+                        continue
+                    cand = bytes(buf[i:i + resp_len])
+                    if self._crc16(cand[:-2]) == cand[-2:]:
+                        return cand
+            return None
+        except Exception:
+            return None
+
     def _try_connect(self, port):
         try:
             client = ModbusSerialClient(port=port, baudrate=self.baudrate, timeout=self.timeout)
@@ -102,10 +144,14 @@ class ThermoModbusDriver(QObject):
             sp.dsrdtr = False
             sp.dtr = False
             sp.rts = False
+            # 打开串口的电平跳变会使设备复位重启（实测：开串口后 ~2s 内输出
+            # EasyLogger 启动 banner），需等设备启动完成再握手
+            time.sleep(2.0)
             # 握手：FC04 读 0x701，值等于 0x0F0F 即认定找到设备（与 0xB020 温度
             # 读取同为输入寄存器 FC04；设备对 FC06 写 0x701 不响应，不能先写后读）
-            rr = client.read_input_registers(CHECK_ADDR, count=1, device_id=SERVER_ADDR)
-            if not rr.isError() and rr.registers and rr.registers[0] == CHECK_VALUE:
+            pdu = b"\x04" + CHECK_ADDR.to_bytes(2, "big") + b"\x00\x01"
+            resp = self._raw_transaction(sp, pdu, resp_fc=0x04, resp_len=7, timeout=1.0)
+            if resp and int.from_bytes(resp[3:5], "big") == CHECK_VALUE:
                 with self._lock:
                     self._client = client
                     self._port = port
@@ -138,18 +184,22 @@ class ThermoModbusDriver(QObject):
         寄存器布局（0xB020 起输入寄存器 FC04，与 C# Demo readSensor 一致）：
           0xB020 = 顶盖实测温度（×10 格式；系统总开关关闭时为 0，启动后随加热上升）
           0xB021 = 盒体/环境温度（约 18，不随加热变化）
+
+        设备推流或启停切换时偶发读到坏值（如停止后读到 3302.6℃），
+        超出合理范围（-5~60 ℃）的读数按失败处理，不进曲线和数据文件。
         """
         with self._lock:
             if not self._client:
                 return None
-            try:
-                rr = self._client.read_input_registers(
-                    TEMP_READ_ADDR, count=1, device_id=SERVER_ADDR)
-                if rr.isError() or not rr.registers:
-                    return None
-                return rr.registers[0] / TEMP_SCALE
-            except Exception:
+            pdu = b"\x04" + TEMP_READ_ADDR.to_bytes(2, "big") + b"\x00\x01"
+            resp = self._raw_transaction(
+                self._client.socket, pdu, resp_fc=0x04, resp_len=7)
+            if not resp:
                 return None
+            temp = int.from_bytes(resp[3:5], "big", signed=True) / TEMP_SCALE
+            if not -5.0 <= temp <= 60.0:
+                return None
+            return temp
 
     def write_temperature(self, temp_c):
         """下发温度设定（℃×10 写入 0xB010，范围 0~100）。对应 C# writeRegister。"""
@@ -157,24 +207,24 @@ class ThermoModbusDriver(QObject):
         with self._lock:
             if not self._client:
                 return False
-            try:
-                rr = self._client.write_register(
-                    LID_TEMP_SET_ADDR, int(round(temp_c * TEMP_SCALE)), device_id=SERVER_ADDR)
-                return not rr.isError()
-            except Exception:
-                return False
+            pdu = (b"\x06" + LID_TEMP_SET_ADDR.to_bytes(2, "big")
+                   + int(round(temp_c * TEMP_SCALE)).to_bytes(2, "big"))
+            resp = self._raw_transaction(
+                self._client.socket, pdu, resp_fc=0x06, resp_len=8)
+            # FC06 应答为请求回显，校验数据段一致
+            return bool(resp) and resp[2:6] == pdu[1:5]
 
     def write_system_switch(self, on):
         """系统总开关（对应 C# writeSwitch(0xB000)）。"""
         with self._lock:
             if not self._client:
                 return False
-            try:
-                rr = self._client.write_coil(
-                    SYSTEM_SWITCH_ADDR, bool(on), device_id=SERVER_ADDR)
-                return not rr.isError()
-            except Exception:
-                return False
+            pdu = (b"\x05" + SYSTEM_SWITCH_ADDR.to_bytes(2, "big")
+                   + (b"\xff\x00" if on else b"\x00\x00"))
+            resp = self._raw_transaction(
+                self._client.socket, pdu, resp_fc=0x05, resp_len=8)
+            # FC05 应答为请求回显，校验数据段一致
+            return bool(resp) and resp[2:6] == pdu[1:5]
 
     def shutdown(self):
         """停止轮询并关闭串口。"""
