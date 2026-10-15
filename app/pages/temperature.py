@@ -17,7 +17,7 @@ class TemperaturePage(QWidget):
         left = Card("温度设定")
         form = QFormLayout()
         self.sp_target = QDoubleSpinBox()
-        self.sp_target.setRange(25.0, 45.0)
+        self.sp_target.setRange(0.0, 100.0)
         self.sp_target.setDecimals(1)
         self.sp_target.setValue(sim.temp_target)
         form.addRow("目标温度 (℃)", self.sp_target)
