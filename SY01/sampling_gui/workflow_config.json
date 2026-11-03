@@ -1,0 +1,12 @@
+{
+  "测试方案A": {
+    "params": {
+      "sample_ul": 25.0,
+      "dead_volume_ul": 60.0,
+      "air_ul": 40.0,
+      "stroke_ul": 250.0
+    },
+    "source_role": "采样口1 (Port 2)",
+    "detect_role": "检测口1 (Port 1)"
+  }
+}

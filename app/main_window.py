@@ -1,23 +1,21 @@
-"""主窗口（精简版：仅温度控制）：分组侧边栏 + 页面栈 + 顶部状态栏。
+"""主窗口（精简版：设备连接 + 温度控制 + 实时数据）。
 
-侧边栏分组：实验流程 / 温度控制 / 运行 / 实时数据 / 数据。
-实验未建立时，温度控制、数据管理按钮禁用。
+侧边栏分组：实验流程 / 温度控制 / 实时数据。
+实验未建立时，温度控制按钮禁用。
 """
 import time
 
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtWidgets import (QFrame, QGridLayout, QHBoxLayout, QLabel, QMainWindow,
-                             QMessageBox, QPushButton, QScrollArea, QStackedWidget,
+                             QPushButton, QScrollArea, QStackedWidget,
                              QVBoxLayout, QWidget)
 
-from app.pages.data_manager import DataManagerPage
-from app.pages.run import RunPage
 from app.pages.temperature import TemperaturePage
 from app.pages.workflow import WorkflowPage
 from app.simulator import DeviceSimulator, ExpState
 
-PAGE_WORKFLOW, PAGE_RUN, PAGE_TEMP, PAGE_DATA = range(4)
-LOCKED_PAGES = {PAGE_TEMP, PAGE_DATA}
+PAGE_WORKFLOW, PAGE_TEMP = range(2)
+LOCKED_PAGES = {PAGE_TEMP}
 
 
 class SidebarGroup(QFrame):
@@ -96,10 +94,8 @@ class MainWindow(QMainWindow):
         body.addWidget(self._build_sidebar())
         self.pages = QStackedWidget()
         self.workflow_page = WorkflowPage(self.sim)
-        self.run_page = RunPage(self.sim)
         self.temp_page = TemperaturePage(self.sim)
-        self.data_page = DataManagerPage(self.sim)
-        for w in (self.workflow_page, self.run_page, self.temp_page, self.data_page):
+        for w in (self.workflow_page, self.temp_page):
             self.pages.addWidget(w)
         self.pages.setCurrentIndex(PAGE_WORKFLOW)
         body.addWidget(self.pages, 1)
@@ -107,7 +103,6 @@ class MainWindow(QMainWindow):
 
         self.sim.exp_state_changed.connect(self._on_exp_state)
         self.sim.states_updated.connect(self._apply_locks)
-        self.sim.states_updated.connect(self._update_run_buttons)
         self.sim.states_updated.connect(self._update_realtime)
         self._apply_locks()
         self._update_header()
@@ -141,16 +136,17 @@ class MainWindow(QMainWindow):
             g_temp.add_button("温度控制", lambda: self._goto(PAGE_TEMP)))
         sb.addWidget(g_temp)
 
-        # 运行
-        g_run = SidebarGroup("运行")
-        self.btn_start = g_run.add_button("启动", self._toggle_run)
-        self.btn_stop = g_run.add_button("停止", self.sim.finish_experiment)
-        sb.addWidget(g_run)
+        # 运行（设备启动/停止）——暂时隐藏，恢复时取消注释
+        # g_run = SidebarGroup("运行")
+        # self.btn_start = g_run.add_button("启动", lambda: self.sim.set_run(True))
+        # self.btn_stop = g_run.add_button("停止", lambda: self.sim.set_run(False))
+        # sb.addWidget(g_run)
 
         # 实时数据
         g_rt = SidebarGroup("实时数据", cols=2)
         self.rt_labels = {}
-        for key, name in (("temp", "温度"), ("elapsed", "运行时长"), ("state", "状态")):
+        for key, name in (("temp", "恒温槽温度"), ("box", "盒内温度"),
+                          ("state", "状态")):
             box = QVBoxLayout()
             cap = QLabel(name)
             cap.setAlignment(Qt.AlignCenter)
@@ -164,41 +160,28 @@ class MainWindow(QMainWindow):
             g_rt.add_widget(wrap)
             self.rt_labels[key] = val
         sb.addWidget(g_rt)
-
-        # 数据
-        g_data = SidebarGroup("数据")
-        self.lock_buttons.append(g_data.add_button("数据管理", lambda: self._goto(PAGE_DATA)))
-        sb.addWidget(g_data)
         sb.addStretch(1)
 
         scroll.setWidget(inner)
         return scroll
 
-    # ---- 导航与运行操作 ----
+    # ---- 导航与状态刷新 ----
     def _goto(self, page_idx):
         self.pages.setCurrentIndex(page_idx)
-
-    def _toggle_run(self):
-        """空闲时启动培养。"""
-        if self.sim.start_experiment():
-            self._goto(PAGE_RUN)
 
     # ---- 状态刷新 ----
     def _apply_locks(self):
         unlocked = self.sim.unlocked
         for btn in self.lock_buttons:
             btn.setEnabled(unlocked)
-        self._update_run_buttons()
-
-    def _update_run_buttons(self):
-        st = self.sim.exp_state
-        self.btn_start.setEnabled(st in (ExpState.CONNECTED, ExpState.FINISHED))
-        self.btn_stop.setEnabled(st is ExpState.RUNNING)
 
     def _update_realtime(self):
         sim = self.sim
-        self.rt_labels["temp"].setText(f"{sim.temp_current:.1f} ℃")
-        self.rt_labels["elapsed"].setText(sim.exp_elapsed())
+        self.rt_labels["temp"].setText(
+            f"{sim.temp_current:.2f} ℃" if sim.real_mode else "--")
+        box = self.rt_labels.get("box")
+        if box is not None:
+            box.setText(f"{sim.box_temp:.2f} ℃" if sim.box_temp is not None else "--")
         self.rt_labels["state"].setText(sim.exp_state.value)
 
     def _update_header(self):
@@ -210,11 +193,6 @@ class MainWindow(QMainWindow):
         # 未建立实验时若正停留在被锁页面则回到流程页
         if not self.sim.unlocked and self.pages.currentIndex() in LOCKED_PAGES:
             self._goto(PAGE_WORKFLOW)
-        # 结束实验自动归档完成后统一提示
-        if state is ExpState.FINISHED and self.sim.last_export_path:
-            QMessageBox.information(
-                self, "实验已归档",
-                f"实验数据已自动导出到:\n{self.sim.last_export_path}")
 
     def _tick_clock(self):
         self.clock.setText(time.strftime("%Y-%m-%d %H:%M:%S"))

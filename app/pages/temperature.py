@@ -16,19 +16,21 @@ class TemperaturePage(QWidget):
 
         left = Card("温度设定")
         form = QFormLayout()
-        self.sp_target = QDoubleSpinBox()
-        self.sp_target.setRange(0.0, 100.0)
-        self.sp_target.setDecimals(1)
-        self.sp_target.setValue(sim.temp_target)
-        form.addRow("目标温度 (℃)", self.sp_target)
-        b_apply = QPushButton("应用设定")
-        b_apply.clicked.connect(self._apply)
-        form.addRow(b_apply)
+
+        # 恒温槽温度设定
+        self.sp_bath = QDoubleSpinBox()
+        self.sp_bath.setRange(-20.0, 50.0)
+        self.sp_bath.setDecimals(1)
+        self.sp_bath.setValue(sim.temp_target)
+        b_bath = QPushButton("应用")
+        b_bath.clicked.connect(self._apply_bath)
+        form.addRow("恒温槽温度 (℃)", self._spin_with_btn(self.sp_bath, b_bath))
+
         left.body.addLayout(form)
-        self.temp_now = ValueCard("当前温度", "℃")
-        self.temp_goal = ValueCard("目标温度", "℃")
+        self.temp_now = ValueCard("当前温度(恒温槽)", "℃")
+        self.temp_box = ValueCard("盒内温度(传感器)", "℃")
         left.body.addWidget(self.temp_now)
-        left.body.addWidget(self.temp_goal)
+        left.body.addWidget(self.temp_box)
         left.body.addStretch(1)
         lay.addWidget(left)
         lay.addStretch(1)
@@ -36,9 +38,21 @@ class TemperaturePage(QWidget):
         sim.states_updated.connect(self.refresh)
         self.refresh()
 
-    def _apply(self):
-        self.sim.set_temp(self.sp_target.value())
+    @staticmethod
+    def _spin_with_btn(spin, btn):
+        w = QWidget()
+        h = QHBoxLayout(w)
+        h.setContentsMargins(0, 0, 0, 0)
+        h.setSpacing(4)
+        h.addWidget(spin, 1)
+        h.addWidget(btn)
+        return w
+
+    def _apply_bath(self):
+        self.sim.set_bath_temp(self.sp_bath.value())
 
     def refresh(self):
-        self.temp_now.set_value(f"{self.sim.temp_current:.2f}")
-        self.temp_goal.set_value(f"{self.sim.temp_target:.2f}")
+        self.temp_now.set_value(
+            f"{self.sim.temp_current:.2f}" if self.sim.real_mode else "--")
+        self.temp_box.set_value(
+            f"{self.sim.box_temp:.2f}" if self.sim.box_temp is not None else "--")

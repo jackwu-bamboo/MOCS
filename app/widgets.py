@@ -1,22 +1,12 @@
-"""通用界面控件：卡片、状态灯、轻量曲线、多通道波形。"""
+"""通用界面控件：卡片、状态灯、轻量曲线。"""
 from collections import deque
 
-import cv2
-import numpy as np
 from PyQt5.QtCore import QPointF, QRect, Qt
-from PyQt5.QtGui import QColor, QImage, QPainter, QPen, QPixmap, QPolygonF
+from PyQt5.QtGui import QColor, QPainter, QPen, QPolygonF
 from PyQt5.QtWidgets import QFrame, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
 ACCENT = "#00e5c0"
 DIM = "#8fa8a4"
-
-
-def ndarray_to_pixmap(img):
-    """OpenCV BGR 图像 → QPixmap。"""
-    rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-    h, w, _ = rgb.shape
-    qimg = QImage(rgb.data, w, h, 3 * w, QImage.Format_RGB888)
-    return QPixmap.fromImage(qimg.copy())
 
 
 class Card(QFrame):
@@ -157,40 +147,3 @@ class CurvePlot(QWidget):
             p.setPen(QPen(QColor(DIM)))
             p.drawText(x - tw, t - 4, text)
             x -= tw + 28
-
-
-class MeaPlot(QWidget):
-    """多通道电生理波形显示。"""
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.data = None
-        self.setMinimumHeight(260)
-
-    def set_data(self, arr):
-        self.data = arr
-        self.update()
-
-    def paintEvent(self, ev):
-        p = QPainter(self)
-        p.setRenderHint(QPainter.Antialiasing)
-        w, h = self.width(), self.height()
-        l, t, r, b = 46, 8, 8, 8
-        p.fillRect(self.rect(), QColor("#0e211f"))
-        if self.data is None or self.data.size == 0:
-            p.setPen(QPen(QColor(DIM)))
-            p.drawText(self.rect(), Qt.AlignCenter, "等待数据...")
-            return
-        n_ch = self.data.shape[0]
-        row_h = (h - t - b) / n_ch
-        idx = np.linspace(0, self.data.shape[1] - 1, max(2, w - l - r)).astype(int)
-        for c in range(n_ch):
-            y0 = t + row_h * c + row_h / 2
-            trace = self.data[c][idx]
-            peak = max(1e-6, float(np.percentile(np.abs(trace), 99)))
-            scale = row_h * 0.38 / peak
-            pts = QPolygonF([QPointF(l + i, y0 - v * scale) for i, v in enumerate(trace)])
-            p.setPen(QPen(QColor(0, 229, 192, 210) if c % 2 == 0 else QColor(64, 196, 255, 210), 1))
-            p.drawPolyline(pts)
-            p.setPen(QPen(QColor(DIM)))
-            p.drawText(4, int(y0), f"CH{c + 1}")

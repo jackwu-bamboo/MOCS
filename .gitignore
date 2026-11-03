@@ -14,3 +14,12 @@ exports/
 # C# 工程（ThermostaticModule 自带 .gitignore 已排除 bin/obj/.vs）
 ThermostaticModule/packages/
 ThermostaticModule/.vscode/
+
+# PyInstaller 构建产物
+build/
+dist/
+*.spec
+
+# 临时调试文件
+SY01/_*.txt
+_*.txt

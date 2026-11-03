@@ -1,0 +1,508 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SY-01B 注射泵｜7步全流程控制动态时序示意</title>
+<style>
+  *{box-sizing:border-box}
+  body{margin:0;background:#f3f6fa;font-family:"PingFang SC","Microsoft YaHei","Noto Sans SC",Arial,sans-serif;color:#172033}
+  .wrap{max-width:1440px;margin:18px auto;padding:0 20px}
+  .title{font-size:24px;font-weight:800;margin-bottom:6px;color:#0f172a}
+  .sub{color:#64748b;font-size:13.5px;margin-bottom:16px;line-height:1.55}
+  .panel{background:white;border:1px solid #e2e8f0;border-radius:18px;box-shadow:0 8px 30px rgba(15,23,42,.06);overflow:hidden}
+  svg{display:block;width:100%;height:auto}
+  .controls{display:flex;align-items:center;gap:10px;padding:12px 20px;border-top:1px solid #edf2f7;flex-wrap:wrap;background:#fafbfc}
+  button{border:0;border-radius:8px;padding:8.5px 16px;font-size:13.5px;font-weight:700;cursor:pointer;background:#1d6fe9;color:white;transition:all .15s}
+  button:hover{opacity:.9;transform:translateY(-1px)}
+  button.secondary{background:#edf4fe;color:#1e5bb8}
+  .status{margin-left:auto;font-weight:700;font-size:14px;color:#1e40af}
+  .legend{display:flex;gap:18px;flex-wrap:wrap;padding:10px 20px 14px;color:#64748b;font-size:12.5px;background:#fafbfc;border-top:1px dashed #e2e8f0}
+  .dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px}
+  .blue{background:#2563eb}.orange{background:#ea580c}.green{background:#16a34a}.gray{background:#64748b}.cyan{background:#06b6d4}
+  .note{margin-top:14px;padding:14px 18px;background:#fffbeb;border:1px solid #fde68a;border-radius:12px;font-size:12.5px;line-height:1.75;color:#78350f}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="title">SY-01B 注射泵「最新 7 步控制时序」动态拓扑系统</div>
+  <div class="sub">
+    <b>执行时序流程：</b>①远端排除废液 → ②芯片定量采样200μL → ③直连远端4个样品管依次分样(各25μL) → ④排除废液(排空余液) → ⑤直连远端4个用空气推(推至检验口) → ⑥抽取新鲜培养液200μL → ⑦补样给芯片200μL。
+  </div>
+
+  <div class="panel">
+  <svg id="svg" viewBox="0 0 1440 790" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <filter id="shadow"><feDropShadow dx="0" dy="4" stdDeviation="7" flood-opacity=".08"/></filter>
+      <linearGradient id="pumpGrad" x1="0" x2="1"><stop offset="0" stop-color="#1e293b"/><stop offset=".6" stop-color="#334155"/><stop offset="1" stop-color="#0f172a"/></linearGradient>
+      <linearGradient id="glassGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#e2e8f0"/></linearGradient>
+    </defs>
+
+    <!-- 底板 -->
+    <rect width="1440" height="790" fill="#f8fafc"/>
+    <text x="45" y="44" font-size="20" font-weight="800" fill="#0f172a">微流控拓扑与最新 7 步控制时序</text>
+    <text x="45" y="66" font-size="12" fill="#64748b">Integrated 8-Port Architecture · 4-Sample Aliquoting (25 μL) → Waste Discharge → Air Purge Push</text>
+
+    <!-- 1. 类器官芯片 (Chip) -->
+    <g filter="url(#shadow)">
+      <rect x="50" y="150" width="310" height="260" rx="18" fill="#ffffff" stroke="#cbd5e1" stroke-width="2"/>
+      <rect x="75" y="180" width="260" height="170" rx="14" fill="#f1f5f9" stroke="#94a3b8" stroke-width="1.5"/>
+      <path d="M100 265 C140 210 180 210 215 265 S270 320 310 265" fill="none" stroke="#94a3b8" stroke-width="6" stroke-linecap="round"/>
+      <ellipse cx="180" cy="260" rx="28" ry="20" fill="#fed7aa" stroke="#f97316" stroke-width="2"/>
+      <ellipse cx="260" cy="270" rx="28" ry="20" fill="#ffedd5" stroke="#f97316" stroke-width="2"/>
+      <circle cx="180" cy="260" r="8" fill="#ea580c"/>
+      <circle cx="260" cy="270" r="8" fill="#ea580c"/>
+      <text x="205" y="380" text-anchor="middle" font-size="16" font-weight="800" fill="#1e293b">类器官芯片 (Organoid Chip)</text>
+      <text x="205" y="400" text-anchor="middle" font-size="11" fill="#64748b">采样 200 μL ｜ 补样 200 μL (Port 8)</text>
+    </g>
+
+    <!-- 2. 培养液补液瓶 (Reservoir) -->
+    <g filter="url(#shadow)">
+      <rect x="75" y="520" width="260" height="185" rx="18" fill="#ffffff" stroke="#cbd5e1" stroke-width="2"/>
+      <path d="M160 575 L250 575 L242 660 Q240 670 230 670 L180 670 Q170 670 168 660 Z" fill="url(#glassGrad)" stroke="#64748b" stroke-width="2"/>
+      <path id="resFluid" d="M168 610 L242 610 L239 658 Q238 668 228 668 L182 668 Q172 668 170 658 Z" fill="#bbf7d0"/>
+      <rect x="185" y="560" width="40" height="15" rx="4" fill="#e2e8f0" stroke="#64748b"/>
+      <text x="205" y="690" text-anchor="middle" font-size="14.5" font-weight="800" fill="#1e293b">新鲜培养液源 (Port 7 直连)</text>
+    </g>
+
+    <!-- 3. SY-01B 注射泵与集成 8 通道旋转分配阀 -->
+    <g filter="url(#shadow)">
+      <rect x="460" y="110" width="370" height="610" rx="22" fill="url(#pumpGrad)"/>
+      
+      <!-- 控制屏 -->
+      <rect x="495" y="135" width="300" height="80" rx="10" fill="#020617" stroke="#1e293b"/>
+      <rect x="505" y="145" width="280" height="60" rx="6" fill="#082f49"/>
+      <text id="screen1" x="520" y="170" font-size="13.5" font-weight="700" fill="#38bdf8">SY-01B [8-PORT ROTARY]</text>
+      <text id="screen2" x="520" y="193" font-size="12.5" font-weight="600" fill="#a5f3fc">MODE: STANDBY</text>
+
+      <!-- 8通旋转阀体 -->
+      <circle cx="645" cy="300" r="92" fill="#e2e8f0" stroke="#94a3b8" stroke-width="4"/>
+      <circle cx="645" cy="300" r="44" fill="#0284c7" stroke="#e0f2fe" stroke-width="3"/>
+      <text x="645" y="306" text-anchor="middle" font-size="13" font-weight="800" fill="#ffffff">8-PORT</text>
+
+      <!-- 8 个端口物理节点 -->
+      <!-- Port 1: 空气 (0°) -->
+      <circle id="vPort1" cx="645" cy="220" r="8" fill="#06b6d4" stroke="#fff" stroke-width="2"/>
+      <text x="645" y="213" text-anchor="middle" font-size="11" font-weight="800" fill="#082f49">1:空气</text>
+
+      <!-- Port 2: 废液 (45°) -->
+      <circle id="vPort2" cx="705" cy="240" r="8" fill="#64748b" stroke="#fff" stroke-width="2"/>
+      <text x="735" y="240" font-size="11" font-weight="800" fill="#334155">2:废液</text>
+
+      <!-- Port 3: Sample 1 (75°) -->
+      <circle id="vPort3" cx="730" cy="275" r="8" fill="#ea580c" stroke="#fff" stroke-width="2"/>
+      <text x="745" y="278" font-size="11" font-weight="800" fill="#ea580c">3:样1</text>
+
+      <!-- Port 4: Sample 2 (105°) -->
+      <circle id="vPort4" cx="730" cy="325" r="8" fill="#ea580c" stroke="#fff" stroke-width="2"/>
+      <text x="745" y="330" font-size="11" font-weight="800" fill="#ea580c">4:样2</text>
+
+      <!-- Port 5: Sample 3 (135°) -->
+      <circle id="vPort5" cx="705" cy="360" r="8" fill="#ea580c" stroke="#fff" stroke-width="2"/>
+      <text x="735" y="370" font-size="11" font-weight="800" fill="#ea580c">5:样3</text>
+
+      <!-- Port 6: Sample 4 (165°) -->
+      <circle id="vPort6" cx="655" cy="380" r="8" fill="#ea580c" stroke="#fff" stroke-width="2"/>
+      <text x="655" y="398" text-anchor="middle" font-size="11" font-weight="800" fill="#ea580c">6:样4</text>
+
+      <!-- Port 7: 补液 (225°) -->
+      <circle id="vPort7" cx="580" cy="355" r="8" fill="#16a34a" stroke="#fff" stroke-width="2"/>
+      <text x="548" y="360" font-size="11" font-weight="800" fill="#15803d">7:补液</text>
+
+      <!-- Port 8: 芯片 (295°) -->
+      <circle id="vPort8" cx="575" cy="265" r="8" fill="#2563eb" stroke="#fff" stroke-width="2"/>
+      <text x="548" y="260" font-size="11" font-weight="800" fill="#1d4ed8">8:芯片</text>
+
+      <!-- 旋转导通指针 -->
+      <line id="valvePointer" x1="645" y1="300" x2="705" y2="240" stroke="#facc15" stroke-width="4.5" stroke-linecap="round"/>
+
+      <!-- 柱塞与注射管 (200 μL 行程) -->
+      <rect x="590" y="420" width="110" height="230" rx="10" fill="url(#glassGrad)" stroke="#94a3b8" stroke-width="2.5"/>
+      <g stroke="#94a3b8" stroke-width="1.5">
+        <line x1="600" y1="455" x2="615" y2="455"/><text x="620" y="458" font-size="9" fill="#64748b">200μL</text>
+        <line x1="600" y1="495" x2="612" y2="495"/>
+        <line x1="600" y1="535" x2="615" y2="535"/><text x="620" y="538" font-size="9" fill="#64748b">100μL</text>
+        <line x1="600" y1="575" x2="612" y2="575"/>
+        <line x1="600" y1="615" x2="615" y2="615"/><text x="620" y="618" font-size="9" fill="#64748b">0 μL</text>
+      </g>
+      
+      <!-- 液体与活塞头 -->
+      <rect id="fluid" x="598" y="615" width="94" height="25" rx="5" fill="#93c5fd" opacity=".9"/>
+      <rect id="plunger" x="605" y="605" width="80" height="40" rx="6" fill="#475569"/>
+      <rect x="637" y="645" width="16" height="40" fill="#94a3b8"/>
+
+      <text x="645" y="695" text-anchor="middle" font-size="12" font-weight="700" fill="#cbd5e1">SY 高精度柱塞泵 (200μL计量)</text>
+    </g>
+
+    <!-- 4. 远端检验收集工位 (5 通道全部直连泵头) -->
+    <g filter="url(#shadow)">
+      <rect x="970" y="90" width="435" height="440" rx="20" fill="#ffffff" stroke="#cbd5e1" stroke-width="2"/>
+      <text x="995" y="122" font-size="16" font-weight="800" fill="#0f172a">远端收集与检验工位 (5路直连)</text>
+      <text x="995" y="142" font-size="11" fill="#64748b">Dedicated Tubing to SY-01B Ports · Direct Air Purging to Outlets</text>
+
+      <!-- 废液排样口 (Waste) - 来自 Port 2 -->
+      <g>
+        <rect id="wasteBox" x="1190" y="160" width="95" height="48" rx="8" fill="#f8fafc" stroke="#475569" stroke-width="2"/>
+        <rect id="wFluid" x="1196" y="184" width="83" height="20" rx="5" fill="#cbd5e1"/>
+        <text x="1300" y="183" font-size="13" font-weight="800" fill="#dc2626">废液口 (Waste)</text>
+        <text x="1300" y="198" font-size="10.5" fill="#64748b">接 Port 2 ｜ 排除废液</text>
+      </g>
+
+      <!-- 样品管 1 - 来自 Port 3 -->
+      <g>
+        <rect id="box1" x="1190" y="225" width="85" height="42" rx="7" fill="url(#glassGrad)" stroke="#64748b" stroke-width="1.8"/>
+        <rect id="sFluid1" x="1195" y="247" width="75" height="16" rx="4" fill="#bae6fd"/>
+        <text x="1290" y="246" font-size="12.5" font-weight="800" fill="#1e293b">检验口 1 (Sample 1)</text>
+        <text x="1290" y="261" font-size="11" fill="#ea580c" font-weight="700">25 μL ｜ 接 Port 3</text>
+      </g>
+
+      <!-- 样品管 2 - 来自 Port 4 -->
+      <g>
+        <rect id="box2" x="1190" y="285" width="85" height="42" rx="7" fill="url(#glassGrad)" stroke="#64748b" stroke-width="1.8"/>
+        <rect id="sFluid2" x="1195" y="307" width="75" height="16" rx="4" fill="#bae6fd"/>
+        <text x="1290" y="306" font-size="12.5" font-weight="800" fill="#1e293b">检验口 2 (Sample 2)</text>
+        <text x="1290" y="321" font-size="11" fill="#ea580c" font-weight="700">25 μL ｜ 接 Port 4</text>
+      </g>
+
+      <!-- 样品管 3 - 来自 Port 5 -->
+      <g>
+        <rect id="box3" x="1190" y="345" width="85" height="42" rx="7" fill="url(#glassGrad)" stroke="#64748b" stroke-width="1.8"/>
+        <rect id="sFluid3" x="1195" y="367" width="75" height="16" rx="4" fill="#bae6fd"/>
+        <text x="1290" y="366" font-size="12.5" font-weight="800" fill="#1e293b">检验口 3 (Sample 3)</text>
+        <text x="1290" y="381" font-size="11" fill="#ea580c" font-weight="700">25 μL ｜ 接 Port 5</text>
+      </g>
+
+      <!-- 样品管 4 - 来自 Port 6 -->
+      <g>
+        <rect id="box4" x="1190" y="405" width="85" height="42" rx="7" fill="url(#glassGrad)" stroke="#64748b" stroke-width="1.8"/>
+        <rect id="sFluid4" x="1195" y="427" width="75" height="16" rx="4" fill="#bae6fd"/>
+        <text x="1290" y="426" font-size="12.5" font-weight="800" fill="#1e293b">检验口 4 (Sample 4)</text>
+        <text x="1290" y="441" font-size="11" fill="#ea580c" font-weight="700">25 μL ｜ 接 Port 6</text>
+      </g>
+    </g>
+
+    <!-- 5. 顶部空气吸入口 (直连 Port 1) -->
+    <g>
+      <path d="M645 212 L645 80" fill="none" stroke="#94a3b8" stroke-width="3" stroke-dasharray="4 4"/>
+      <rect x="605" y="50" width="80" height="30" rx="6" fill="#f1f5f9" stroke="#64748b" stroke-width="1.5"/>
+      <text x="645" y="70" text-anchor="middle" font-size="11" font-weight="700" fill="#334155">空气除菌滤器</text>
+    </g>
+
+    <!-- 6. 独立流路管线 -->
+    <!-- 芯片采样管 (Port 8) -->
+    <path id="pChip" d="M360 265 C430 265 470 265 567 265" fill="none" stroke="#cbd5e1" stroke-width="5" stroke-linecap="round"/>
+    <!-- 培养液补液管 (Port 7) -->
+    <path id="pRefill" d="M335 600 C440 600 480 430 572 360" fill="none" stroke="#cbd5e1" stroke-width="5" stroke-linecap="round"/>
+    <!-- 废液排样管 (Port 2) -->
+    <path id="pTubeW" d="M713 240 C800 210 950 185 1190 185" fill="none" stroke="#cbd5e1" stroke-width="4.5" stroke-linecap="round"/>
+    <!-- 4 个样品分样管 (Port 3..6) -->
+    <path id="pTube1" d="M738 275 C820 265 960 245 1190 245" fill="none" stroke="#cbd5e1" stroke-width="4.5" stroke-linecap="round"/>
+    <path id="pTube2" d="M738 325 C830 320 960 305 1190 305" fill="none" stroke="#cbd5e1" stroke-width="4.5" stroke-linecap="round"/>
+    <path id="pTube3" d="M713 360 C810 380 960 365 1190 365" fill="none" stroke="#cbd5e1" stroke-width="4.5" stroke-linecap="round"/>
+    <path id="pTube4" d="M663 380 C740 440 960 425 1190 425" fill="none" stroke="#cbd5e1" stroke-width="4.5" stroke-linecap="round"/>
+
+    <!-- 粒子容器 -->
+    <g id="particles"></g>
+
+    <!-- 状态卡片 -->
+    <g filter="url(#shadow)">
+      <rect x="970" y="550" width="435" height="175" rx="16" fill="#ffffff" stroke="#e2e8f0" stroke-width="1.5"/>
+      <text x="995" y="582" font-size="15" font-weight="800" fill="#0f172a">SY-01B 步序执行明细</text>
+      <text id="stepInfoTitle" x="995" y="612" font-size="13.5" font-weight="700" fill="#1d4ed8">第一步：远端排除废液</text>
+      <text id="stepInfoDesc" x="995" y="638" font-size="12" fill="#475569">旋转阀切至 Port 2，柱塞推至底端零位，排空残余死体积与旧液。</text>
+      <text id="stepActionSub" x="995" y="662" font-size="12" fill="#64748b">选通端口：Port 2 (Waste) ｜ 柱塞复位至零位</text>
+      <rect x="995" y="682" width="385" height="18" rx="4" fill="#f1f5f9"/>
+      <rect id="progBar" x="995" y="682" width="55" height="18" rx="4" fill="#2563eb"/>
+    </g>
+
+    <!-- 顶部大标题提示 -->
+    <text id="flowTitle" x="720" y="44" text-anchor="middle" font-size="19" font-weight="800" fill="#1d4ed8">
+      【第一步】远端排除废液 (选通 Port 2)
+    </text>
+  </svg>
+
+  <div class="controls">
+    <button id="start">▶ 自动连续运行</button>
+    <button id="prev" class="secondary">← 上一步</button>
+    <button id="next" class="secondary">下一步 →</button>
+    <button id="reset" class="secondary">↺ 复位流程</button>
+    <span class="status" id="status">步骤 1 / 7：远端排除废液</span>
+  </div>
+
+  <div class="legend">
+    <span><i class="dot gray"></i>第一/四步：排除废液 (Port 2)</span>
+    <span><i class="dot blue"></i>第二步：芯片采样 200 μL (Port 8)</span>
+    <span><i class="dot orange"></i>第三步：4路直连分样 各25 μL (Port 3~6)</span>
+    <span><i class="dot cyan"></i>第五步：4路空气推净出样 (Port 1→3~6)</span>
+    <span><i class="dot green"></i>第六/七步：抽取与回补 200 μL 培养液 (Port 7/8)</span>
+  </div>
+  </div>
+
+  <div class="note">
+    <b>最新时序逻辑工程解析：</b>
+    <br>1. <b>分样后先排废（第四步）</b>：第三步向 4 个样品管各分发 25 μL（共 100 μL）后，注射腔内尚余 100 μL 样品。此时第四步切至 Port 2，将多余样品彻底排出到废液桶，使注射腔完全清空归零。
+    <br>2. <b>空腔吸气再吹扫（第五步）</b>：在注射泵完全清空状态下，第五步阀门切至 Port 1 吸取干燥无菌空气，再依次切向 4 个直连样品管正压吹气，杜绝气液混相回吸，彻底将管壁挂带的 25 μL 试样压至检验口。
+    <br>3. <b>洁净抽取与芯片回补（第六、七步）</b>：管路吹空后，从 Port 7 吸入 200 μL 全新培养液，再经 Port 8 回补芯片，全程无污染、高精度闭环。
+  </div>
+</div>
+
+<script>
+const svgNS = "http://www.w3.org/2000/svg";
+const particles = document.getElementById("particles");
+let step = 0;
+let timer = null;
+
+const stepConfigs = [
+  {
+    // 第一步：远端排除废液
+    title: "【第一步】远端排除废液 (选通 Port 2)",
+    statusText: "步骤 1 / 7：远端排除废液",
+    screenMode: "DISP WASTE [PORT 2]",
+    infoTitle: "第一步：远端排除废液",
+    infoDesc: "旋转阀切至 Port 2，柱塞向前推到底，排空系统前端死体积与废液。",
+    infoSub: "导通端口：Port 2 (Waste) ｜ 柱塞归至 0 μL 基准线",
+    plungerY: 605, fluidY: 615, fluidH: 0,
+    pointer: {x: 705, y: 240},
+    activePortId: "vPort2",
+    activePaths: ["pTubeW"],
+    color: "#64748b",
+    reverseParticle: false,
+    progWidth: 55
+  },
+  {
+    // 第二步：芯片采样
+    title: "【第二步】芯片定量采样 200 μL (选通 Port 8)",
+    statusText: "步骤 2 / 7：芯片定量采样 200 μL",
+    screenMode: "ASP: 200 μL [PORT 8]",
+    infoTitle: "第二步：芯片采样 (200 μL)",
+    infoDesc: "阀门转至 Port 8，柱塞匀速后退精确抽取 200 μL 类器官培养液样品。",
+    infoSub: "导通端口：Port 8 (Chip) ｜ 柱塞吸至 200 μL 刻度线",
+    plungerY: 455, fluidY: 475, fluidH: 145,
+    pointer: {x: 575, y: 265},
+    activePortId: "vPort8",
+    activePaths: ["pChip"],
+    color: "#2563eb",
+    reverseParticle: true, // 从芯片吸入
+    progWidth: 110
+  },
+  {
+    // 第三步：直连远端 4 个样品管 (各25 μL)
+    title: "【第三步】直连远端 4 个样品管 (各 25 μL)",
+    statusText: "步骤 3 / 7：直连 4 路样品管各分样 25 μL",
+    screenMode: "DISP: 4x25μL [PORT 3-6]",
+    infoTitle: "第三步：直连远端 4 路样品管分样",
+    infoDesc: "旋转阀依次导通 Port 3、4、5、6，每次步进精准注入 25 μL 样品，共排出 100 μL。",
+    infoSub: "导通端口：Port 3, 4, 5, 6 ｜ 柱塞行进至 100 μL 刻度",
+    plungerY: 535, fluidY: 555, fluidH: 65,
+    pointer: {x: 730, y: 275},
+    activePortId: "vPort3",
+    activePaths: ["pTube1", "pTube2", "pTube3", "pTube4"],
+    color: "#ea580c",
+    reverseParticle: false,
+    progWidth: 165
+  },
+  {
+    // 第四步：排除废液
+    title: "【第四步】排除废液 (剩余样品排至 Port 2 废液口)",
+    statusText: "步骤 4 / 7：排除多余样品与废液",
+    screenMode: "DISP WASTE [PORT 2]",
+    infoTitle: "第四步：排除废液 (注射腔清空归零)",
+    infoDesc: "阀门切至 Port 2 废液通道，柱塞将剩余 100 μL 样品与气泡排入废液桶，注射腔完全排空。",
+    infoSub: "导通端口：Port 2 (Waste) ｜ 柱塞推至 0 μL，为吸气做准备",
+    plungerY: 605, fluidY: 615, fluidH: 0,
+    pointer: {x: 705, y: 240},
+    activePortId: "vPort2",
+    activePaths: ["pTubeW"],
+    color: "#64748b",
+    reverseParticle: false,
+    progWidth: 220
+  },
+  {
+    // 第五步：直连远端 4 个用空气推，确保样本流出到检验口
+    title: "【第五步】直连远端 4 个用空气推，确保样本流出到检验口",
+    statusText: "步骤 5 / 7：4 个通道空气推液吹扫",
+    screenMode: "AIR PUSH [PORT 1->3..6]",
+    infoTitle: "第五步：4 路直连空气推净出样",
+    infoDesc: "清空后切至 Port 1 吸取洁净空气，再依次切向 3~6 号样品管推气，确保挂壁样品全部流至检验口。",
+    infoSub: "导通端口：Port 1 (吸气) → 顺次气推 Port 3、4、5、6",
+    plungerY: 565, fluidY: 580, fluidH: 40,
+    pointer: {x: 645, y: 220},
+    activePortId: "vPort1",
+    activePaths: ["pTube1", "pTube2", "pTube3", "pTube4"],
+    color: "#06b6d4",
+    reverseParticle: false,
+    progWidth: 275
+  },
+  {
+    // 第六步：抽取新鲜培养液
+    title: "【第六步】抽取新鲜培养液 200 μL (选通 Port 7)",
+    statusText: "步骤 6 / 7：吸取 200 μL 新鲜培养液",
+    screenMode: "ASP: 200 μL [PORT 7]",
+    infoTitle: "第六步：抽取新鲜培养液 (200 μL)",
+    infoDesc: "阀位转至 Port 7，柱塞回退定量吸取 200 μL 新鲜恒温培养基，准备注入类器官芯片。",
+    infoSub: "导通端口：Port 7 (Reservoir) ｜ 柱塞吸至 200 μL 满载",
+    plungerY: 455, fluidY: 475, fluidH: 145,
+    pointer: {x: 580, y: 355},
+    activePortId: "vPort7",
+    activePaths: ["pRefill"],
+    color: "#16a34a",
+    reverseParticle: true, // 从补液瓶吸入
+    progWidth: 330
+  },
+  {
+    // 第七步：补样给芯片
+    title: "【第七步】补样给芯片 200 μL (选通 Port 8)",
+    statusText: "步骤 7 / 7：满额补样 200 μL 给芯片",
+    screenMode: "REFILL CHIP [PORT 8]",
+    infoTitle: "第七步：补样给芯片 (200 μL)",
+    infoDesc: "阀门切回 Port 8，柱塞平稳将 200 μL 培养液注入类器官芯片，实现全流程液量恒定平衡闭环。",
+    infoSub: "导通端口：Port 8 (Chip) ｜ 注液完毕，复位就绪",
+    plungerY: 605, fluidY: 615, fluidH: 0,
+    pointer: {x: 575, y: 265},
+    activePortId: "vPort8",
+    activePaths: ["pChip"],
+    color: "#16a34a",
+    reverseParticle: false, // 注入芯片
+    progWidth: 385
+  }
+];
+
+function setStep(idx) {
+  step = (idx + stepConfigs.length) % stepConfigs.length;
+  const cfg = stepConfigs[step];
+
+  // 1. 文案更新
+  document.getElementById("flowTitle").textContent = cfg.title;
+  document.getElementById("status").textContent = cfg.statusText;
+  document.getElementById("screen2").textContent = cfg.screenMode;
+  document.getElementById("stepInfoTitle").textContent = cfg.infoTitle;
+  document.getElementById("stepInfoDesc").textContent = cfg.infoDesc;
+  document.getElementById("stepActionSub").textContent = cfg.infoSub;
+  document.getElementById("progBar").setAttribute("width", cfg.progWidth);
+
+  // 2. 阀门指示针与高亮端口
+  const pointer = document.getElementById("valvePointer");
+  pointer.setAttribute("x2", cfg.pointer.x);
+  pointer.setAttribute("y2", cfg.pointer.y);
+
+  for (let p = 1; p <= 8; p++) {
+    const el = document.getElementById("vPort" + p);
+    if (!el) continue;
+    let isActive = ("vPort" + p === cfg.activePortId);
+    if (step === 2 && p >= 3 && p <= 6) isActive = true; // 分样选通 3..6
+    if (step === 4 && p >= 3 && p <= 6) isActive = true; // 气推选通 3..6
+
+    if (isActive) {
+      el.setAttribute("stroke", "#facc15");
+      el.setAttribute("stroke-width", "3.5");
+    } else {
+      el.setAttribute("stroke", "#ffffff");
+      el.setAttribute("stroke-width", "2");
+    }
+  }
+
+  // 3. 注射器活塞行程与液体颜色
+  const plunger = document.getElementById("plunger");
+  const fluid = document.getElementById("fluid");
+  plunger.setAttribute("y", cfg.plungerY);
+  fluid.setAttribute("y", cfg.fluidY);
+  fluid.setAttribute("height", cfg.fluidH);
+  if (step === 5 || step === 6) {
+    fluid.setAttribute("fill", "#86efac"); // 新鲜培养液绿色
+  } else if (step === 4) {
+    fluid.setAttribute("fill", "#cffafe"); // 空气/气推青蓝色
+  } else {
+    fluid.setAttribute("fill", "#93c5fd"); // 样品蓝色
+  }
+
+  // 4. 主管路状态高亮
+  document.getElementById("pChip").setAttribute("stroke", (step === 1 || step === 6) ? (step === 1 ? "#2563eb" : "#16a34a") : "#cbd5e1");
+  document.getElementById("pRefill").setAttribute("stroke", (step === 5) ? "#16a34a" : "#cbd5e1");
+  document.getElementById("pTubeW").setAttribute("stroke", (step === 0 || step === 3) ? "#64748b" : "#cbd5e1");
+
+  // 4 根样品分样管高亮
+  const sampleTubes = ["pTube1", "pTube2", "pTube3", "pTube4"];
+  sampleTubes.forEach(tId => {
+    const el = document.getElementById(tId);
+    if (step === 2) {
+      el.setAttribute("stroke", "#ea580c"); // 橙色分样
+      el.setAttribute("stroke-width", "5");
+    } else if (step === 4) {
+      el.setAttribute("stroke", "#06b6d4"); // 青色空气推
+      el.setAttribute("stroke-width", "5");
+    } else {
+      el.setAttribute("stroke", "#cbd5e1");
+      el.setAttribute("stroke-width", "4.5");
+    }
+  });
+
+  // 5. 远端收集管液面动效
+  if (step >= 2) {
+    for (let i = 1; i <= 4; i++) {
+      document.getElementById("sFluid" + i).setAttribute("fill", "#38bdf8");
+    }
+  }
+
+  // 6. 生成流动粒子动画
+  createMotionParticles(cfg);
+}
+
+function createMotionParticles(cfg) {
+  particles.innerHTML = "";
+  if (!cfg.activePaths || cfg.activePaths.length === 0) return;
+
+  cfg.activePaths.forEach(pathId => {
+    const pEl = document.getElementById(pathId);
+    if (!pEl) return;
+    const pathD = pEl.getAttribute("d");
+
+    const particleCount = (step === 2 || step === 4) ? 4 : 8;
+    for (let i = 0; i < particleCount; i++) {
+      const c = document.createElementNS(svgNS, "circle");
+      c.setAttribute("r", (step === 4) ? 3.5 : 4.5);
+      c.setAttribute("fill", cfg.color);
+      c.setAttribute("opacity", ".85");
+
+      const anim = document.createElementNS(svgNS, "animateMotion");
+      anim.setAttribute("dur", (step === 2 || step === 4) ? "1.8s" : "1.6s");
+      anim.setAttribute("repeatCount", "indefinite");
+      anim.setAttribute("begin", (i * 0.22) + "s");
+      anim.setAttribute("path", pathD);
+      if (cfg.reverseParticle) {
+        anim.setAttribute("keyPoints", "1;0");
+      } else {
+        anim.setAttribute("keyPoints", "0;1");
+      }
+      anim.setAttribute("keyTimes", "0;1");
+      anim.setAttribute("calcMode", "linear");
+
+      c.appendChild(anim);
+      particles.appendChild(c);
+    }
+  });
+}
+
+// 按钮控制
+document.getElementById("next").onclick = () => setStep(step + 1);
+document.getElementById("prev").onclick = () => setStep(step - 1);
+document.getElementById("reset").onclick = () => {
+  if (timer) { clearInterval(timer); timer = null; }
+  document.getElementById("start").textContent = "▶ 自动连续运行";
+  setStep(0);
+};
+document.getElementById("start").onclick = () => {
+  if (timer) {
+    clearInterval(timer);
+    timer = null;
+    document.getElementById("start").textContent = "▶ 自动连续运行";
+  } else {
+    document.getElementById("start").textContent = "Ⅱ 暂停展示";
+    timer = setInterval(() => setStep(step + 1), 3200);
+  }
+};
+
+// 默认进入第一步
+setStep(0);
+</script>
+</body>
+</html>
