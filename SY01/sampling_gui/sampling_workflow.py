@@ -1,184 +1,254 @@
 # -*- coding: utf-8 -*-
-"""自动采样和分发控制模块 —— 工作流定义与方案持久化。
+"""自定义流程: 步骤模型、校验、执行计划、方案持久化(v2)。
 
-工作流类型:
-  单路分发       采样口 → 液滴(默认25μL) → 检测口远端 (吸满全行程空气推)
-  四路分发+补液  采样口采样(150μL+管内空气50μL) → 排空气 → 4×25μL 分发 →
-                 排余量 → 逐路气推到远端 → 培养基口补液 150μL 回采样口 (液量守恒)
+步骤类型 (界面名 -> 内部类型):
+  切阀 valve(port) | 注入 inject(ul) | 推出 push(ul) | 初始化 init(wait)
+  等待 wait(sec)   | 循环开始 loop_start(count) | 循环结束 loop_end
 
-方案以「名称」保存到 workflow_config.json, 含类型、参数与端口角色。
+约束:
+  - 初始化只能是第 1 步, 且只能有一次 (循环内不允许初始化)
+  - 循环不可嵌套, 次数 ≥ 1, 无上限
+  - 注入 / 推出 为相对体积, 注射腔范围 0 ~ stroke_ul
+  - 校验不通过则禁止执行
 """
 import json
 import os
+import time
 
 from port_config import app_dir
-from sy01_pump import FULL_STROKE_STEPS
+from sy01_pump import FULL_STROKE_STEPS, PumpError
 
 CONFIG_FILE = os.path.join(app_dir(), "workflow_config.json")
+VERSION = 2
+DEFAULT_SETTINGS = dict(port_count=10, stroke_ul=250.0)
+INIT_WAIT_S = 3.0
+EPS = 1e-6
 
-WORKFLOW_TYPES = ("单路分发", "四路分发+补液")
-
-DEFAULT_PARAMS = dict(
-    sample_ul=25.0,       # 单路: 分样体积 / 四路: 采样体积
-    dead_volume_ul=50.0,  # 采样管死体积 (采样时随样品一起抽入, 分发前排到废液)
-    aliquot_ul=25.0,      # 四路: 单口分发体积
-    stroke_ul=250.0,      # 进样器满行程体积
-)
+TYPE_KIND = {"切阀": "valve", "注入": "inject", "推出": "push", "初始化": "init",
+             "等待": "wait", "循环开始": "loop_start", "循环结束": "loop_end"}
+KIND_LABEL = {v: k for k, v in TYPE_KIND.items()}
 
 
 # ---------- 方案持久化 ----------
 
-def load_all() -> dict:
-    """返回全部已保存方案: {名称: {"wf_type", "params", "source_role", "detect_role"}}。"""
-    if os.path.exists(CONFIG_FILE):
-        try:
-            with open(CONFIG_FILE, encoding="utf-8") as f:
-                data = json.load(f)
-            if isinstance(data, dict):
-                return data
-        except Exception:
-            pass
-    return {}
+def _empty_store():
+    return {"version": VERSION, "settings": dict(DEFAULT_SETTINGS), "flows": {}}
 
 
-def _write(data):
+def _write(store):
     with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+        json.dump(store, f, ensure_ascii=False, indent=2)
 
 
-def save_workflow(name: str, params: dict, source_role: str, detect_role: str,
-                  wf_type: str = "单路分发"):
-    data = load_all()
-    data[name] = dict(params=params, source_role=source_role,
-                      detect_role=detect_role, wf_type=wf_type)
-    _write(data)
+def load_store():
+    """读取存档。旧格式(无 version 或损坏)整体改名备份, 从空白开始。"""
+    if not os.path.exists(CONFIG_FILE):
+        return _empty_store()
+    try:
+        with open(CONFIG_FILE, encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception:
+        data = None
+    if not isinstance(data, dict) or data.get("version") != VERSION:
+        stamp = time.strftime("%Y%m%d%H%M%S")
+        os.replace(CONFIG_FILE, os.path.join(app_dir(), f"workflow_config.legacy-{stamp}.json"))
+        return _empty_store()
+    settings = dict(DEFAULT_SETTINGS)
+    settings.update(data.get("settings", {}))
+    data["settings"] = settings
+    data.setdefault("flows", {})
+    return data
 
 
-def delete_workflow(name: str):
-    data = load_all()
-    if name in data:
-        del data[name]
-        _write(data)
+def list_flows():
+    return sorted(load_store()["flows"])
 
 
-def load_workflow(name: str):
-    """返回 (params, source_role, detect_role, wf_type)；不存在时用默认值。"""
-    data = load_all().get(name, {})
-    params = dict(DEFAULT_PARAMS)
-    saved = data.get("params", {})
-    for k in params:
-        if k in saved:
-            params[k] = float(saved[k])
-    return (params, data.get("source_role", ""), data.get("detect_role", ""),
-            data.get("wf_type", "单路分发"))
+def get_flow(name):
+    return [dict(s) for s in load_store()["flows"][name]["steps"]]
 
 
-# ---------- 步骤生成 ----------
+def save_flow(name, steps):
+    store = load_store()
+    store["flows"][name] = {"steps": [dict(s) for s in steps]}
+    _write(store)
 
-def _precheck_fn(pump):
-    """工作流第一步: 无条件初始化。
 
-    手册要求: 设备上电后必须 ZR 复位方可操作; 泉断电重启后未初始化状态
-    在静止时 Q 查询不报错, 只有运动时才报错误7, 因此每次流程开始都初始化。
-    """
-    def precheck():
+def delete_flow(name):
+    store = load_store()
+    if store["flows"].pop(name, None) is not None:
+        _write(store)
+
+
+def get_settings():
+    return dict(load_store()["settings"])
+
+
+def set_port_count(n):
+    store = load_store()
+    store["settings"]["port_count"] = int(n)
+    _write(store)
+
+
+# ---------- 执行计划 ----------
+# 操作元组: (kind, 描述, 轮次标签, 数值, 步骤号)
+#   kind: init(数值=初始化后等待秒) | valve(数值=端口) | move(数值=有符号 μL) | wait(数值=秒)
+
+def ul_to_steps(ul, stroke):
+    return int(round(FULL_STROKE_STEPS * ul / stroke))
+
+
+def _make_op(s, no):
+    k = s["kind"]
+    if k == "valve":
+        return ("valve", f"切阀 → 端口 {int(s['port'])}", "", int(s["port"]), no)
+    if k == "inject":
+        return ("move", f"注入 {float(s['ul']):g} μL", "", float(s["ul"]), no)
+    if k == "push":
+        return ("move", f"推出 {float(s['ul']):g} μL", "", -float(s["ul"]), no)
+    if k == "init":
+        w = float(s.get("wait", INIT_WAIT_S))
+        return ("init", f"初始化 (Z1R)，之后等待 {w:g} 秒", "", w, no)
+    if k == "wait":
+        t = float(s["sec"])
+        return ("wait", f"等待 {t:g} 秒", "", t, no)
+    raise ValueError(f"未知步骤类型: {k}")
+
+
+def build_segments(steps):
+    """把步骤列表切分为 [("ops", [操作...])] 与 [("loop", 次数, [循环体操作...])] 段。"""
+    segs = []
+    cur = []
+    body = None
+    count = 0
+    for no, s in enumerate(steps, 1):
+        k = s["kind"]
+        if k == "loop_start":
+            segs.append(("ops", cur))
+            cur, body, count = [], [], int(s["count"])
+        elif k == "loop_end":
+            segs.append(("loop", count, body))
+            body = None
+        else:
+            (body if body is not None else cur).append(_make_op(s, no))
+    segs.append(("ops", cur))
+    return segs
+
+
+def iter_ops(segs):
+    """惰性展开为逐条操作; 循环次数再大也不占内存。"""
+    for seg in segs:
+        if seg[0] == "ops":
+            yield from seg[1]
+        else:
+            _, cnt, body = seg
+            for r in range(1, cnt + 1):
+                tag = f"第 {r}/{cnt} 轮"
+                for kind, text, _, val, no in body:
+                    yield (kind, text, tag, val, no)
+
+
+def op_label(op):
+    _, text, tag, _, no = op
+    return f"第{no}步 · {tag} · {text}" if tag else f"第{no}步 · {text}"
+
+
+def _sleep_checked(pump, seconds):
+    end = time.time() + seconds
+    while time.time() < end:
+        if getattr(pump, "_abort", False):
+            raise PumpError("操作已中止")
+        time.sleep(0.05)
+
+
+def execute_op(pump, op, stroke):
+    kind, _, _, val, _ = op
+    if getattr(pump, "_abort", False):
+        raise PumpError("操作已中止")
+    if kind == "init":
         pump.init_pump()
-    return precheck
+        _sleep_checked(pump, val)
+    elif kind == "valve":
+        pump.valve_goto(val)
+    elif kind == "move":
+        pump.plunger_goto(pump.current_steps + ul_to_steps(val, stroke))
+    elif kind == "wait":
+        _sleep_checked(pump, val)
 
 
-def _goto(pump, port):
-    return lambda: pump.valve_goto(port)
+# ---------- 校验 ----------
+
+def _range_msg(no, cur, stroke, rnd, cnt):
+    where = f"第 {no} 步" + (f"（第 {rnd}/{cnt} 轮）" if cnt > 1 else "")
+    if cur < 0:
+        return f"{where}：排出量超过注射腔内液量（体积将降为 {cur:.1f} μL）"
+    return f"{where}：注入后注射腔体积达到 {cur:.1f} μL，超过容量 {stroke:g} μL"
 
 
-def _move(pump, pos):
-    return lambda: pump.plunger_goto(pos)
+def validate(steps, settings):
+    """返回 (错误列表, 摘要)。错误列表为空即通过; 摘要含 peak / final / rounds。"""
+    if not steps:
+        return ["流程为空，请先添加步骤。"], None
+    stroke = float(settings["stroke_ul"])
+    ports = int(settings["port_count"])
+    kinds = [s["kind"] for s in steps]
+    errs = []
+    if kinds[0] != "init":
+        errs.append("第 1 步必须是「初始化」。")
+    if kinds.count("init") != 1:
+        errs.append("「初始化」只能出现一次，且位于第 1 步。")
 
+    open_at = None
+    for i, s in enumerate(steps, 1):
+        k = s["kind"]
+        if k == "loop_start":
+            if open_at is not None:
+                errs.append(f"第 {i} 步：不支持嵌套循环。")
+            elif not (isinstance(s.get("count"), int) and s["count"] >= 1):
+                errs.append(f"第 {i} 步：循环次数必须为 1 以上的整数。")
+            if open_at is None:
+                open_at = i
+        elif k == "loop_end":
+            if open_at is None:
+                errs.append(f"第 {i} 步：「循环结束」前没有对应的「循环开始」。")
+            open_at = None
+        elif k == "valve" and not (1 <= int(s["port"]) <= ports):
+            errs.append(f"第 {i} 步：端口 {s['port']} 超出阀口范围 1–{ports}。")
+        elif k in ("inject", "push") and not float(s["ul"]) > 0:
+            errs.append(f"第 {i} 步：体积必须大于 0。")
+        elif k == "wait" and float(s["sec"]) < 0:
+            errs.append(f"第 {i} 步：等待时间不能为负。")
+        elif k == "init" and i != 1:
+            errs.append(f"第 {i} 步：「初始化」只能放在第 1 步。")
+    if open_at is not None:
+        errs.append(f"第 {open_at} 步「循环开始」缺少对应的「循环结束」。")
+    if errs:
+        return errs, None
 
-def _combined(*fns):
-    return lambda: [f() for f in fns]
-
-
-def build_workflow(pump, ports: dict, params: dict, wf_type: str = "单路分发"):
-    """按类型分发步骤生成。"""
-    if wf_type == "四路分发+补液":
-        return _build_multi(pump, ports, params)
-    return _build_single(pump, ports, params)
-
-
-def _build_single(pump, ports: dict, params: dict):
-    """单路分发: 排空 → 预充采样管(排净空气) → 采样 → 分发液滴 → 推气到远端。
-
-    ports:  dict(source, detect, waste, air)
-    params: dict(sample_ul, dead_volume_ul, stroke_ul)
-    """
-    steps = []
-    sample_steps = pump.vol_to_steps(params["sample_ul"])
-    dead_steps = pump.vol_to_steps(params["dead_volume_ul"])
-
-    add = lambda desc, fn: steps.append((desc, fn))
-
-    add("[0] 状态预检/自动初始化", _precheck_fn(pump))
-    add("[1] 阀→备用, 排空进样器",
-        _combined(lambda: pump.valve_goto(ports["waste"]), _move(pump, 0)))
-    add(f"[2] 预充采样管: 阀→采样口, 抽 {params['dead_volume_ul']:g}μL",
-        _combined(_goto(pump, ports["source"]), _move(pump, dead_steps)))
-    add("[3] 阀→备用, 排出预充液 (排净采样管空气)",
-        _combined(_goto(pump, ports["waste"]), _move(pump, 0)))
-    add(f"[4] 阀→采样口, 采样 {params['sample_ul']:g}μL",
-        _combined(_goto(pump, ports["source"]), _move(pump, sample_steps)))
-    add(f"[5] 阀→检测口 (Port {ports['detect']}), 分发 {params['sample_ul']:g}μL 液滴",
-        _combined(_goto(pump, ports["detect"]), _move(pump, 0)))
-    add("[6] 阀→空气口, 吸满全行程空气",
-        _combined(lambda: pump.valve_goto(ports["air"]),
-                  _move(pump, FULL_STROKE_STEPS)))
-    add("[7] 阀→检测口, 推气: 液滴压向远端",
-        _combined(_goto(pump, ports["detect"]), _move(pump, 0)))
-    return steps
-
-
-def _build_multi(pump, ports: dict, params: dict):
-    """四路分发+补液: 排空 → 预充采样管 → 采样 → 4×分发 → 排余 →
-    逐路气推 → 培养基补液回采样口 (液量守恒)。
-
-    ports:  dict(source, waste, air, medium, detects=[4个检测口号])
-    params: dict(sample_ul, dead_volume_ul, aliquot_ul, stroke_ul)
-    """
-    steps = []
-    sample_steps = pump.vol_to_steps(params["sample_ul"])
-    dead_steps = pump.vol_to_steps(params["dead_volume_ul"])
-    ali_steps = pump.vol_to_steps(params["aliquot_ul"])
-    detects = ports["detects"]
-
-    add = lambda desc, fn: steps.append((desc, fn))
-
-    add("[0] 状态预检/自动初始化", _precheck_fn(pump))
-    add("[1] 阀→备用, 排空进样器",
-        _combined(lambda: pump.valve_goto(ports["waste"]), _move(pump, 0)))
-    add(f"[2] 预充采样管: 阀→采样口, 抽 {params['dead_volume_ul']:g}μL",
-        _combined(_goto(pump, ports["source"]), _move(pump, dead_steps)))
-    add("[3] 阀→备用, 排出预充液 (排净采样管空气)",
-        _combined(_goto(pump, ports["waste"]), _move(pump, 0)))
-    add(f"[4] 阀→采样口, 采样 {params['sample_ul']:g}μL",
-        _combined(_goto(pump, ports["source"]), _move(pump, sample_steps)))
-
-    pos = sample_steps
-    for i, port in enumerate(detects):
-        add(f"[5.{i + 1}] 阀→检测口{i + 1} (Port {port})", _goto(pump, port))
-        pos -= ali_steps
-        add(f"[5.{i + 1}] 分发 {params['aliquot_ul']:g}μL → 检验口{i + 1}",
-            _move(pump, pos))
-
-    add("[排余] 阀→备用, 排余量",
-        _combined(lambda: pump.valve_goto(ports["waste"]), _move(pump, 0)))
-    for i, port in enumerate(detects):
-        add(f"[气推{i + 1}.1] 阀→空气口, 吸满空气",
-            _combined(lambda: pump.valve_goto(ports["air"]),
-                      _move(pump, FULL_STROKE_STEPS)))
-        add(f"[气推{i + 1}] 阀→检测口{i + 1} (Port {port}), 推气到远端",
-            _combined(_goto(pump, port), _move(pump, 0)))
-    add(f"[补液] 阀→培养基 (Port {ports['medium']}), 抽液 {params['sample_ul']:g}μL",
-        _combined(lambda: pump.valve_goto(ports["medium"]),
-                  _move(pump, sample_steps)))
-    add(f"[补液] 阀→采样口 (Port {ports['source']}), 补液 {params['sample_ul']:g}μL",
-        _combined(_goto(pump, ports["source"]), _move(pump, 0)))
-    return steps
+    # 体积推演: 循环体线性, 只需检查第 1 轮与最后一轮两端
+    vol, peak, rounds = 0.0, 0.0, 0
+    for seg in build_segments(steps):
+        if seg[0] == "ops":
+            for kind, _, _, val, no in seg[1]:
+                if kind == "init":
+                    vol = 0.0
+                elif kind == "move":
+                    vol += val
+                    peak = max(peak, vol)
+                    if vol < -EPS or vol > stroke + EPS:
+                        return [_range_msg(no, vol, stroke, 1, 1)], None
+        else:
+            _, cnt, body = seg
+            rounds += cnt
+            d = sum(op[3] for op in body if op[0] == "move")
+            for k in sorted({0, cnt - 1}):
+                cur = vol + k * d
+                for kind, _, _, val, no in body:
+                    if kind != "move":
+                        continue
+                    cur += val
+                    peak = max(peak, cur)
+                    if cur < -EPS or cur > stroke + EPS:
+                        return [_range_msg(no, cur, stroke, k + 1, cnt)], None
+            vol += cnt * d
+    return [], {"peak": peak, "final": vol, "rounds": rounds, "steps": len(steps)}

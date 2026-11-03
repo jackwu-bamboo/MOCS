@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""SY-01B 注射泵手动测试台入口。
+"""SY-01B 自动采样和分发控制模块 · 程序入口。
 
 用法:
     python main.py
@@ -25,16 +25,17 @@ def _qt_message_handler(_mode, _context, message):
 
 def main():
     logging.getLogger().addFilter(_QtMaterialLogFilter())
-    from PyQt5.QtCore import qInstallMessageHandler
+    from PyQt5.QtCore import Qt, qInstallMessageHandler
+    from PyQt5.QtWidgets import QApplication
     qInstallMessageHandler(_qt_message_handler)
 
-    from PyQt5.QtWidgets import QApplication
+    QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
     app = QApplication(sys.argv)
-    try:
-        from qt_material import apply_stylesheet
-        apply_stylesheet(app, theme="light_blue.xml")
-    except Exception:
-        pass
+
+    from qt_material import apply_stylesheet
+    from styles import APP_QSS, CUSTOM_QSS, EXTRA, THEME
+    apply_stylesheet(app, theme=THEME, extra=EXTRA)
+    app.setStyleSheet(app.styleSheet() + CUSTOM_QSS + APP_QSS)
 
     from main_window import MainWindow
     win = MainWindow()

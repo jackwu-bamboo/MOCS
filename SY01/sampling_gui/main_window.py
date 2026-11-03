@@ -1,46 +1,63 @@
 # -*- coding: utf-8 -*-
-"""SY-01B 注射泵手动测试台主窗口（分步验证，不含全流程）。"""
-from collections import OrderedDict
+"""自动采样和分发控制模块 · 主窗口（自定义流程）。"""
+import time
 
 from PyQt5.QtCore import Qt, pyqtSignal
+from PyQt5.QtGui import QColor, QPalette
 from PyQt5.QtSerialPort import QSerialPortInfo
 from PyQt5.QtWidgets import (
-    QComboBox, QDoubleSpinBox, QGridLayout, QGroupBox, QHBoxLayout, QLabel,
-    QLineEdit, QMainWindow, QMessageBox, QPlainTextEdit, QPushButton,
-    QSpinBox, QVBoxLayout, QWidget,
+    QAbstractItemView, QComboBox, QStyle, QStyleOptionViewItem, QStyledItemDelegate, QDoubleSpinBox, QGridLayout, QGroupBox,
+    QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMainWindow, QMessageBox,
+    QPlainTextEdit, QPushButton, QSpinBox, QTableWidget, QTableWidgetItem,
+    QVBoxLayout, QWidget,
 )
 
 from command_runner import CommandRunner
-from port_config import (
-    DEFAULT_PORT_COUNT, DEFAULT_PORT_MAP, load_config, role_color, save_config,
-)
-from command_runner import CommandRunner
-from port_config import (
-    DEFAULT_PORT_COUNT, DEFAULT_PORT_MAP, load_config, role_color, save_config,
-)
-from sy01_pump import PumpError, Sy01SerialPump
-from valve_widget import ValveWidget
 from sampling_workflow import (
-    WORKFLOW_TYPES, build_workflow, delete_workflow, load_all, load_workflow,
-    save_workflow,
+    INIT_WAIT_S, KIND_LABEL, TYPE_KIND, build_segments, delete_flow, execute_op,
+    get_flow, get_settings, iter_ops, list_flows, op_label, save_flow,
+    set_port_count, validate,
 )
+from styles import COMBO_VIEW_QSS
+from sy01_pump import PumpError, Sy01SerialPump
+
+
+class _ComboDelegate(QStyledItemDelegate):
+    """下拉列表绘制: 选中/悬停行用深青绿底色, 不依赖主题的亮色高亮。"""
+
+    def paint(self, painter, option, index):
+        sel = bool(option.state & (QStyle.State_Selected | QStyle.State_MouseOver))
+        painter.fillRect(option.rect, QColor("#1d4f47" if sel else "#122623"))
+        opt = QStyleOptionViewItem(option)
+        opt.state &= ~(QStyle.State_Selected | QStyle.State_MouseOver | QStyle.State_HasFocus)
+        opt.palette.setColor(QPalette.Text, QColor("#e6fffa" if sel else "#cdeee8"))
+        super().paint(painter, opt, index)
+
+# 表单字段在哪些步骤类型下显示
+FORM_FIELDS = {
+    "port": ("切阀",),
+    "ul": ("注入", "推出"),
+    "sec": ("等待", "初始化"),
+    "count": ("循环开始",),
+}
 
 
 class MainWindow(QMainWindow):
     log_sig = pyqtSignal(str)
-    step_sig = pyqtSignal(str)
+    flow_sig = pyqtSignal(str)
 
     def __init__(self):
         super().__init__()
         self.setWindowTitle("自动采样和分发控制模块")
-        self.resize(1400, 860)
+        self.resize(1440, 960)
         self.pump = None
-        self.port_count, self.mapping = load_config()
-        self.wf_params, _, _, _ = load_workflow("默认方案")
-        self.wf_running = False
-        self.wf_steps = None
-        self.wf_step_idx = 0
+        self.settings = get_settings()
+        self.steps = []          # 当前编辑中的步骤列表
+        self.op_iter = None      # 单步执行用的操作迭代器
+        self.pending = None      # 下一条待执行的操作
+        self.running = False
         self.log_sig.connect(self._append_log)
+        self.flow_sig.connect(self._set_flow_text)
 
         self.runner = CommandRunner(self)
         self.runner.log.connect(self._append_log)
@@ -49,26 +66,38 @@ class MainWindow(QMainWindow):
         self.runner.start()
 
         self._build_ui()
-        self.step_sig.connect(self._on_step)
+        for cmb in self.findChildren(QComboBox):
+            view = cmb.view()
+            view.setStyleSheet(COMBO_VIEW_QSS)
+            pal = view.palette()
+            pal.setColor(QPalette.Highlight, QColor("#1d4f47"))
+            pal.setColor(QPalette.HighlightedText, QColor("#e6fffa"))
+            pal.setColor(QPalette.Base, QColor("#122623"))
+            pal.setColor(QPalette.Text, QColor("#cdeee8"))
+            view.setPalette(pal)
+            view.viewport().setPalette(pal)
+            view.setItemDelegate(_ComboDelegate(view))
         self._refresh_ports()
-        self._sync_valve_config()
+        self._refresh_flow_combo()
+        self._refresh_table()
         self._append_log("就绪。请选择串口并连接设备。")
 
-    # ================= UI =================
+    # ================= 界面 =================
     def _build_ui(self):
         central = QWidget()
         self.setCentralWidget(central)
-        root = QHBoxLayout(central)
+        root = QVBoxLayout(central)
+        top = QHBoxLayout()
+        top.addWidget(self._build_left(), 0)
+        top.addWidget(self._build_main(), 1)
+        root.addLayout(top, 1)
+        root.addWidget(self._build_log())
 
-        root.addWidget(self._build_left_panel(), 0)
-        root.addWidget(self._build_right_panel(), 1)
-
-    def _build_left_panel(self):
+    def _build_left(self):
         panel = QWidget()
-        panel.setFixedWidth(460)
+        panel.setFixedWidth(340)
         lay = QVBoxLayout(panel)
 
-        # 设备连接
         gb = QGroupBox("设备连接")
         g = QGridLayout(gb)
         self.cmb_port = QComboBox()
@@ -78,380 +107,384 @@ class MainWindow(QMainWindow):
         self.cmb_baud.addItems(["9600", "38400"])
         self.spn_addr = QSpinBox()
         self.spn_addr.setRange(0, 14)
-        self.lbl_addr = QLabel("地址字符 '1'")
-        self.spn_addr.valueChanged.connect(
-            lambda v: self.lbl_addr.setText(f"地址字符 '{chr(0x31 + v)}'"))
-        g.addWidget(self.cmb_port, 0, 0)
-        g.addWidget(btn_refresh, 0, 1)
+        g.addWidget(QLabel("串口"), 0, 0)
+        g.addWidget(self.cmb_port, 0, 1)
+        g.addWidget(btn_refresh, 0, 2)
         g.addWidget(QLabel("波特率"), 1, 0)
         g.addWidget(self.cmb_baud, 1, 1)
-        g.addWidget(QLabel("泵地址拨码"), 2, 0)
+        g.addWidget(QLabel("泵地址"), 2, 0)
         g.addWidget(self.spn_addr, 2, 1)
-        g.addWidget(self.lbl_addr, 3, 0, 1, 2)
         self.btn_connect = QPushButton("连接设备")
         self.btn_connect.clicked.connect(self._toggle_connect)
-        g.addWidget(self.btn_connect, 4, 0)
-        self.btn_stop = QPushButton("急停 (T)")
-        self.btn_stop.clicked.connect(self._do_estop)
-        g.addWidget(self.btn_stop, 4, 1)
+        self.btn_stop_dev = QPushButton("急停 (T)")
+        self.btn_stop_dev.clicked.connect(self._stop)
+        g.addWidget(self.btn_connect, 3, 0, 1, 2)
+        g.addWidget(self.btn_stop_dev, 3, 2)
         lay.addWidget(gb)
 
-        lay.addWidget(self._build_workflow_group())
+        gb = QGroupBox("流程方案")
+        g = QGridLayout(gb)
+        self.cmb_flow = QComboBox()
+        self.edt_name = QLineEdit()
+        self.edt_name.setPlaceholderText("方案名称")
+        g.addWidget(QLabel("已存方案"), 0, 0)
+        g.addWidget(self.cmb_flow, 0, 1, 1, 2)
+        g.addWidget(QLabel("方案名称"), 1, 0)
+        g.addWidget(self.edt_name, 1, 1, 1, 2)
+        self.btn_new = QPushButton("新建")
+        self.btn_new.clicked.connect(self._new_flow)
+        self.btn_load = QPushButton("加载")
+        self.btn_load.clicked.connect(self._load_flow)
+        self.btn_save = QPushButton("保存")
+        self.btn_save.clicked.connect(self._save_flow)
+        self.btn_del = QPushButton("删除")
+        self.btn_del.clicked.connect(self._delete_flow)
+        for i, b in enumerate((self.btn_new, self.btn_load, self.btn_save, self.btn_del)):
+            g.addWidget(b, 2, i)
+        lay.addWidget(gb)
 
-        # 日志
-        gb4 = QGroupBox("日志")
-        v4 = QVBoxLayout(gb4)
+        gb = QGroupBox("端口说明")
+        g = QGridLayout(gb)
+        self.spn_ports = QSpinBox()
+        self.spn_ports.setRange(4, 15)
+        self.spn_ports.setValue(int(self.settings["port_count"]))
+        self.spn_ports.valueChanged.connect(self._on_port_count_changed)
+        g.addWidget(QLabel("阀口总数"), 0, 0)
+        g.addWidget(self.spn_ports, 0, 1)
+        hint = QLabel("流程中直接使用端口号（1 – 阀口总数）。")
+        hint.setWordWrap(True)
+        g.addWidget(hint, 1, 0, 1, 2)
+        lay.addWidget(gb)
+        lay.addStretch(1)
+        return panel
+
+    def _build_main(self):
+        panel = QWidget()
+        lay = QVBoxLayout(panel)
+
+        gb = QGroupBox("流程步骤")
+        v = QVBoxLayout(gb)
+        self.tbl = QTableWidget(0, 3)
+        self.tbl.setMinimumHeight(200)
+        self.tbl.setHorizontalHeaderLabels(["#", "类型", "参数"])
+        self.tbl.verticalHeader().setVisible(False)
+        self.tbl.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.tbl.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.tbl.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.tbl.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        self.tbl.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        self.tbl.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
+        v.addWidget(self.tbl)
+        self.btn_del_row = QPushButton("删除选中行")
+        self.btn_del_row.clicked.connect(self._delete_row)
+        v.addWidget(self.btn_del_row, 0, Qt.AlignLeft)
+        lay.addWidget(gb, 1)
+
+        gb = QGroupBox("添加步骤")
+        g = QGridLayout(gb)
+        self.cmb_type = QComboBox()
+        self.cmb_type.addItems(list(TYPE_KIND.keys()))
+        self.cmb_type.currentTextChanged.connect(self._on_type_changed)
+        g.addWidget(QLabel("步骤类型"), 0, 0)
+        g.addWidget(self.cmb_type, 0, 1)
+
+        self.spn_port = QSpinBox()
+        self.spn_port.setRange(1, int(self.settings["port_count"]))
+        self.spn_ul = QDoubleSpinBox()
+        self.spn_ul.setRange(0.1, 250.0)
+        self.spn_ul.setValue(50.0)
+        self.spn_ul.setSuffix(" μL")
+        self.spn_sec = QDoubleSpinBox()
+        self.spn_sec.setRange(0, 3600)
+        self.spn_sec.setValue(INIT_WAIT_S)
+        self.spn_sec.setSuffix(" 秒")
+        self.spn_count = QSpinBox()
+        self.spn_count.setRange(1, 2147483647)
+        self.spn_count.setValue(2)
+        self.spn_count.setSuffix(" 次")
+
+        self.fields = {}
+        for row, (key, text, widget) in enumerate([
+            ("port", "端口号", self.spn_port),
+            ("ul", "体积", self.spn_ul),
+            ("sec", "等待时间", self.spn_sec),
+            ("count", "循环次数", self.spn_count),
+        ], start=1):
+            lab = QLabel(text)
+            g.addWidget(lab, row, 0)
+            g.addWidget(widget, row, 1)
+            self.fields[key] = (lab, widget)
+
+        self.btn_add = QPushButton("添加到末尾")
+        self.btn_add.clicked.connect(self._add_step)
+        g.addWidget(self.btn_add, 5, 0, 1, 2)
+        g.setColumnStretch(2, 1)
+        lay.addWidget(gb)
+        self._on_type_changed(self.cmb_type.currentText())
+
+        gb = QGroupBox("执行")
+        v = QVBoxLayout(gb)
+        row = QHBoxLayout()
+        self.btn_validate = QPushButton("校验")
+        self.btn_validate.clicked.connect(self._check)
+        self.btn_run = QPushButton("▶ 执行流程")
+        self.btn_run.clicked.connect(self._run_flow)
+        self.btn_step = QPushButton("▶ 执行单步")
+        self.btn_step.clicked.connect(self._run_one_step)
+        self.btn_halt = QPushButton("■ 停止")
+        self.btn_halt.clicked.connect(self._stop)
+        for b in (self.btn_validate, self.btn_run, self.btn_step):
+            row.addWidget(b)
+        row.addStretch(1)
+        row.addWidget(self.btn_halt)
+        v.addLayout(row)
+        self.lbl_check = QLabel("未校验")
+        self.lbl_check.setWordWrap(True)
+        v.addWidget(self.lbl_check)
+        self.lbl_flow = QLabel("就绪")
+        self.lbl_flow.setWordWrap(True)
+        v.addWidget(self.lbl_flow)
+        lay.addWidget(gb)
+        return panel
+
+    def _build_log(self):
+        gb = QGroupBox("日志")
+        v = QVBoxLayout(gb)
         self.log = QPlainTextEdit()
         self.log.setReadOnly(True)
         self.log.setMaximumBlockCount(3000)
-        v4.addWidget(self.log)
-        lay.addWidget(gb4, 1)
-        return panel
-
-    def _build_workflow_group(self):
-        gb = QGroupBox("自动流程")
-        g = QGridLayout(gb)
-
-        self.cmb_wftype = QComboBox()
-        self.cmb_wftype.addItems(WORKFLOW_TYPES)
-        self.cmb_wftype.currentTextChanged.connect(self._on_wftype_changed)
-        g.addWidget(QLabel("流程类型"), 0, 0)
-        g.addWidget(self.cmb_wftype, 0, 1)
-
-        self.cmb_scheme = QComboBox()
-        self._refresh_scheme_combo()
-        self.edt_wf_name = QLineEdit()
-        self.edt_wf_name.setPlaceholderText("输入方案名称")
-        g.addWidget(QLabel("已存方案"), 1, 0)
-        g.addWidget(self.cmb_scheme, 1, 1)
-        btn_load = QPushButton("加载")
-        btn_load.clicked.connect(self._load_wf_scheme)
-        btn_del = QPushButton("删除")
-        btn_del.clicked.connect(self._delete_wf_scheme)
-        g.addWidget(btn_load, 1, 2)
-        g.addWidget(btn_del, 1, 3)
-        g.addWidget(QLabel("方案名称"), 2, 0)
-        g.addWidget(self.edt_wf_name, 2, 1, 1, 2)
-
-        self.cmb_source = QComboBox()
-        self.cmb_detect = QComboBox()
-        self._refresh_role_combos()
-        g.addWidget(QLabel("源口(采样)"), 3, 0)
-        g.addWidget(self.cmb_source, 3, 1)
-        self.lbl_target = QLabel("目标口")
-        g.addWidget(self.lbl_target, 4, 0)
-        g.addWidget(self.cmb_detect, 4, 1)
-
-        self.lbl_param1 = QLabel("分样体积")
-        self.spn_sample = QDoubleSpinBox()
-        self.spn_sample.setRange(1, 250)
-        self.spn_sample.setValue(self.wf_params["sample_ul"])
-        self.spn_sample.setSuffix(" μL")
-        self.lbl_param2 = QLabel("排空气体积")
-        self.spn_dead = QDoubleSpinBox()
-        self.spn_dead.setRange(0, 5000)
-        self.spn_dead.setValue(self.wf_params["dead_volume_ul"])
-        self.spn_dead.setSuffix(" μL")
-        self.lbl_param3 = QLabel("单口分发体积")
-        self.spn_aliquot = QDoubleSpinBox()
-        self.spn_aliquot.setRange(1, 250)
-        self.spn_aliquot.setValue(self.wf_params.get("aliquot_ul", 25.0))
-        self.spn_aliquot.setSuffix(" μL")
-        self.spn_aliquot.setVisible(False)
-        self.lbl_param3.setVisible(False)
-        for sp in (self.spn_sample, self.spn_dead, self.spn_aliquot):
-            sp.valueChanged.connect(self._invalidate_wf)
-        g.addWidget(self.lbl_param1, 5, 0)
-        g.addWidget(self.spn_sample, 5, 1)
-        g.addWidget(self.lbl_param2, 6, 0)
-        g.addWidget(self.spn_dead, 6, 1)
-        g.addWidget(self.lbl_param3, 7, 0)
-        g.addWidget(self.spn_aliquot, 7, 1)
-
-        self.btn_save = QPushButton("保存方案")
-        self.btn_save.clicked.connect(self._save_wf_params)
-        g.addWidget(self.btn_save, 8, 0)
-        self.btn_run = QPushButton("▶ 执行流程")
-        self.btn_run.clicked.connect(self._run_workflow)
-        g.addWidget(self.btn_run, 8, 1)
-        self.btn_step = QPushButton("▶ 执行单步")
-        self.btn_step.clicked.connect(self._run_one_step)
-        g.addWidget(self.btn_step, 9, 0)
-        self.btn_halt = QPushButton("■ 停止")
-        self.btn_halt.clicked.connect(self._stop_workflow)
-        g.addWidget(self.btn_halt, 9, 1)
-        self.lbl_step = QLabel("就绪")
-        self.lbl_step.setWordWrap(True)
-        g.addWidget(self.lbl_step, 10, 0, 1, 3)
+        self.log.setMaximumHeight(150)
+        v.addWidget(self.log)
         return gb
 
-    def _on_wftype_changed(self, wftype):
-        multi = wftype == "四路分发+补液"
-        self.lbl_param1.setText("采样体积" if multi else "分样体积")
-        self.lbl_param2.setText("排空气体积")
-        self.lbl_param3.setText("单口分发体积")
-        self.lbl_param3.setVisible(multi)
-        self.spn_aliquot.setVisible(multi)
-        if multi:
-            if self.spn_sample.value() < 100:
-                self.spn_sample.setValue(150.0)
-            self.spn_aliquot.setValue(25.0)
-            self.cmb_detect.setEnabled(False)
-        else:
-            self.cmb_detect.setEnabled(True)
-        self._invalidate_wf()
+    # ================= 表单 =================
+    def _on_type_changed(self, text):
+        for key, (lab, widget) in self.fields.items():
+            show = text in FORM_FIELDS[key]
+            lab.setVisible(show)
+            widget.setVisible(show)
+        if text == "初始化":
+            self.spn_sec.setValue(INIT_WAIT_S)
 
-    def _refresh_scheme_combo(self):
-        self.cmb_scheme.clear()
-        names = sorted(load_all().keys())
-        self.cmb_scheme.addItems(names)
+    def _on_port_count_changed(self, n):
+        set_port_count(n)
+        self.settings["port_count"] = n
+        self.spn_port.setMaximum(n)
+        self._invalidate("阀口总数已修改，请重新校验")
 
-    def _load_wf_scheme(self):
-        name = self.cmb_scheme.currentText()
-        if not name:
+    # ================= 步骤编辑 =================
+    def _describe(self, s):
+        k = s["kind"]
+        if k == "valve":
+            return f"端口 {s['port']}"
+        if k in ("inject", "push"):
+            return f"{float(s['ul']):g} μL"
+        if k == "init":
+            return f"Z1R 半力度，之后等待 {float(s['wait']):g} 秒"
+        if k == "wait":
+            return f"{float(s['sec']):g} 秒"
+        if k == "loop_start":
+            return f"共 {s['count']} 次（不含初始化）"
+        return "—"
+
+    def _refresh_table(self):
+        self.tbl.setRowCount(0)
+        in_loop = False
+        for i, s in enumerate(self.steps, 1):
+            k = s["kind"]
+            indent = "      " if in_loop and k not in ("loop_start", "loop_end") else ""
+            r = self.tbl.rowCount()
+            self.tbl.insertRow(r)
+            self.tbl.setItem(r, 0, QTableWidgetItem(str(i)))
+            self.tbl.setItem(r, 1, QTableWidgetItem(indent + KIND_LABEL[k]))
+            self.tbl.setItem(r, 2, QTableWidgetItem(self._describe(s)))
+            if k == "loop_start":
+                in_loop = True
+            elif k == "loop_end":
+                in_loop = False
+
+    def _add_step(self):
+        kind = TYPE_KIND[self.cmb_type.currentText()]
+        s = {"kind": kind}
+        if kind == "valve":
+            s["port"] = int(self.spn_port.value())
+        elif kind in ("inject", "push"):
+            s["ul"] = float(self.spn_ul.value())
+        elif kind == "init":
+            s["wait"] = float(self.spn_sec.value())
+        elif kind == "wait":
+            s["sec"] = float(self.spn_sec.value())
+        elif kind == "loop_start":
+            s["count"] = int(self.spn_count.value())
+        self.steps.append(s)
+        self._refresh_table()
+        self._invalidate("已修改，请重新校验")
+
+    def _delete_row(self):
+        r = self.tbl.currentRow()
+        if r < 0 or r >= len(self.steps):
             return
-        params, src_role, det_role, wf_type = load_workflow(name)
-        idx = self.cmb_wftype.findText(wf_type)
-        if idx >= 0:
-            self.cmb_wftype.setCurrentIndex(idx)
-        self.spn_sample.setValue(params["sample_ul"])
-        self.spn_dead.setValue(params["dead_volume_ul"])
-        self.spn_aliquot.setValue(params.get("aliquot_ul", 25.0))
-        self.edt_wf_name.setText(name)
-        for box, role in ((self.cmb_source, src_role), (self.cmb_detect, det_role)):
-            idx = box.findText(role) if role else -1
-            if idx >= 0:
-                box.setCurrentIndex(idx)
-        self._invalidate_wf()
-        self._append_log(f"已加载方案「{name}」")
+        del self.steps[r]
+        self._refresh_table()
+        self._invalidate("已修改，请重新校验")
 
-    def _invalidate_wf(self):
-        if self.wf_steps is not None:
-            self.wf_steps = None
-            self.wf_step_idx = 0
-            if not self.wf_running:
-                self.step_sig.emit("参数已修改, 单步计数将从头开始")
+    def _invalidate(self, text=None):
+        """流程被修改: 清空单步进度, 校验结果过期。"""
+        self.op_iter = None
+        self.pending = None
+        self.lbl_check.setStyleSheet("")
+        self.lbl_check.setText(text or "未校验")
+        self.lbl_flow.setText("就绪")
 
-    def _delete_wf_scheme(self):
-        name = self.cmb_scheme.currentText()
-        if not name:
-            return
-        if QMessageBox.question(self, "删除方案", f"确定删除方案「{name}」？") != QMessageBox.Yes:
-            return
-        delete_workflow(name)
-        self._refresh_scheme_combo()
-        self._append_log(f"方案「{name}」已删除")
+    def _set_flow_text(self, text):
+        self.lbl_flow.setText(text)
 
-    def _on_step(self, text):
-        self.lbl_step.setText(text)
-
-    def _save_wf_params(self):
-        name = self.edt_wf_name.text().strip() or self.cmb_scheme.currentText().strip()
-        if not name:
-            QMessageBox.warning(self, "提示", "请先输入方案名称再保存。")
-            return
-        wf_type = self.cmb_wftype.currentText()
-        if wf_type == "四路分发+补液":
-            self.wf_params = dict(
-                sample_ul=self.spn_sample.value(),
-                dead_volume_ul=self.spn_dead.value(),
-                aliquot_ul=self.spn_aliquot.value(),
-                stroke_ul=250.0,
-            )
-        else:
-            self.wf_params = dict(
-                sample_ul=self.spn_sample.value(),
-                dead_volume_ul=self.spn_dead.value(),
-                stroke_ul=250.0,
-            )
-        save_workflow(name, self.wf_params,
-                      self.cmb_source.currentText(), self.cmb_detect.currentText(),
-                      wf_type)
-        self._refresh_scheme_combo()
-        idx = self.cmb_scheme.findText(name)
-        if idx >= 0:
-            self.cmb_scheme.setCurrentIndex(idx)
-        self._append_log(f"方案「{name}」({wf_type}) 已保存")
-
-    def _refresh_role_combos(self):
-        sel_src = self.cmb_source.currentData() if hasattr(self, "cmb_source") else None
-        sel_det = self.cmb_detect.currentData() if hasattr(self, "cmb_detect") else None
-        self.cmb_source.clear()
-        self.cmb_detect.clear()
-        for role, port in self.mapping.items():
-            if role.startswith("采样口"):
-                self.cmb_source.addItem(f"{role}→P{port}", port)
-            elif role.startswith("检测口"):
-                self.cmb_detect.addItem(f"{role}→P{port}", port)
-        for box, sel in ((self.cmb_source, sel_src), (self.cmb_detect, sel_det)):
-            if sel is not None:
-                idx = box.findData(sel)
-                if idx >= 0:
-                    box.setCurrentIndex(idx)
-
-    def _on_step(self, text):
-        self.lbl_step.setText(text)
-
-    def _gather_workflow(self):
-        """从 UI 收集端口与参数, 按流程类型生成步骤。失败返回 None。"""
-        pump = self._require_pump()
-        if not pump:
+    # ================= 校验 =================
+    def _check(self):
+        errs, summ = validate(self.steps, self.settings)
+        if errs:
+            self.lbl_check.setStyleSheet("color:#ff5252; font-weight:bold;")
+            self.lbl_check.setText("✗ 校验未通过：\n" + "\n".join(errs))
             return None
-        wf_type = self.cmb_wftype.currentText()
-        source = self.cmb_source.currentData()
-        waste = self.mapping.get("备用")
-        air = self.mapping.get("空气")
-        medium = self.mapping.get("培养基")
-        if wf_type == "四路分发+补液":
-            params = dict(
-                sample_ul=self.spn_sample.value(),
-                dead_volume_ul=self.spn_dead.value(),
-                aliquot_ul=self.spn_aliquot.value(),
-                stroke_ul=250.0,
-            )
-        else:
-            params = dict(
-                sample_ul=self.spn_sample.value(),
-                dead_volume_ul=self.spn_dead.value(),
-                stroke_ul=250.0,
-            )
-        if wf_type == "四路分发+补液":
-            detects = [p for role, p in sorted(self.mapping.items())
-                       if role.startswith("检测口")]
-            if None in (source, waste, air, medium) or len(detects) != 4:
-                QMessageBox.warning(self, "提示", "端口映射缺少所需角色，请检查配置。")
-                return None
-            ports = dict(source=source, waste=waste, air=air,
-                         medium=medium, detects=detects)
-        else:
-            detect = self.cmb_detect.currentData()
-            if detect is None:
-                QMessageBox.warning(self, "提示", "端口映射缺少所需角色，请检查配置。")
-                return None
-            ports = dict(source=source, detect=detect, waste=waste, air=air)
-        return build_workflow(pump, ports, params, wf_type)
+        self.lbl_check.setStyleSheet("color:#00e5c0; font-weight:bold;")
+        text = (f"✓ 校验通过：活塞峰值 {summ['peak']:.1f} μL，"
+                f"结束余量 {summ['final']:.1f} μL")
+        if summ["rounds"]:
+            text += f"，循环共 {summ['rounds']} 轮"
+        self.lbl_check.setText(text)
+        return summ
 
-    def _set_wf_ui(self, running):
-        self.valve.setEnabled(not running)
-        for b in (self.btn_run, self.btn_step, self.btn_save):
-            b.setEnabled(not running)
+    def _ready_to_run(self):
+        if self.pump is None:
+            QMessageBox.information(self, "提示", "请先连接设备。")
+            return False
+        if self.running:
+            return False
+        if self._check() is None:
+            QMessageBox.warning(self, "无法执行", "流程校验未通过，请按提示修改后再执行。")
+            return False
+        return True
 
-    def _run_workflow(self):
-        pump = self._require_pump()
-        if not pump or self.wf_running:
+    # ================= 执行 =================
+    def _set_busy(self, busy):
+        self.running = busy
+        for w in (self.btn_run, self.btn_step, self.btn_validate, self.btn_add, self.btn_del_row,
+                  self.btn_new, self.btn_load, self.btn_save, self.btn_del, self.cmb_type):
+            w.setEnabled(not busy)
+
+    def _run_flow(self):
+        """从头执行整个流程。"""
+        if not self._ready_to_run():
             return
-        self.wf_steps = self._gather_workflow()
-        if not self.wf_steps:
-            return
-        self.wf_step_idx = 0
-        self.wf_running = True
-        self._set_wf_ui(True)
+        segs = build_segments(self.steps)
+        stroke = float(self.settings["stroke_ul"])
+        pump = self.pump
+        self.op_iter = None
+        self.pending = None
         pump._abort = False
+        self._set_busy(True)
 
         def run():
-            n = len(self.wf_steps)
-            for i, (desc, fn) in enumerate(self.wf_steps, 1):
-                self.step_sig.emit(f"({i}/{n}) {desc}")
-                fn()
-            self.step_sig.emit("✅ 流程完成")
+            for op in iter_ops(segs):
+                self.flow_sig.emit(op_label(op))
+                execute_op(pump, op, stroke)
+            self.flow_sig.emit("✅ 流程完成")
 
         self.runner.submit("自动流程", run)
 
     def _run_one_step(self):
-        pump = self._require_pump()
-        if not pump or self.wf_running:
+        """逐条执行: 每点一次执行下一条操作, 循环内按轮次推进。"""
+        if not self._ready_to_run():
             return
-        if self.wf_steps is None or self.wf_step_idx >= len(self.wf_steps):
-            self.wf_steps = self._gather_workflow()
-            self.wf_step_idx = 0
-        if not self.wf_steps:
+        if self.op_iter is None:
+            self.op_iter = iter_ops(build_segments(self.steps))
+            self.pending = next(self.op_iter, None)
+        op = self.pending
+        if op is None:
+            self.op_iter = None
+            self.flow_sig.emit("✅ 全部步骤已完成，再次点击将从头开始")
             return
-        desc, fn = self.wf_steps[self.wf_step_idx]
-        self.wf_running = True
-        self._set_wf_ui(True)
+        self.pending = next(self.op_iter, None)
+        stroke = float(self.settings["stroke_ul"])
+        pump = self.pump
         pump._abort = False
-        self.step_sig.emit(f"单步 ({self.wf_step_idx + 1}/{len(self.wf_steps)}): {desc}")
-        self.runner.submit("自动流程", fn)
+        self._set_busy(True)
+        self.flow_sig.emit(f"执行中: {op_label(op)}")
+        self.runner.submit("单步", lambda: execute_op(pump, op, stroke))
 
-    def _stop_workflow(self):
-        if self.pump:
-            self.pump.emergency_stop()
+    def _stop(self):
         self.runner.clear()
-
-    def _finish_workflow(self, advance=True):
-        if not self.wf_running:
-            return
-        self.wf_running = False
-        self._set_wf_ui(False)
         if self.pump is not None:
-            self.valve.set_current(self.pump.current_port)
-            self._update_current_label()
-        if advance and self.wf_steps:
-            self.wf_step_idx += 1
-        if self.wf_steps and self.wf_step_idx < len(self.wf_steps):
-            self.step_sig.emit(f"下一步 ({self.wf_step_idx + 1}/{len(self.wf_steps)}): "
-                               f"{self.wf_steps[self.wf_step_idx][0]}")
-        elif self.wf_steps:
-            self.step_sig.emit("✅ 全部步骤完成")
+            self.pump.emergency_stop()
+        self.op_iter = None
+        self.pending = None
+        self._append_log("[停止] 已发送 T 指令并清空队列，下次执行将从头开始")
 
-    def _build_right_panel(self):
-        panel = QWidget()
-        lay = QVBoxLayout(panel)
-
-        self.valve = ValveWidget()
-        self.valve.port_clicked.connect(self._on_valve_clicked)
-        lay.addWidget(self.valve, 1)
-
-        self.lbl_current = QLabel("当前端口：1")
-        self.lbl_current.setAlignment(Qt.AlignCenter)
-        self.lbl_current.setStyleSheet("font-size:15px; font-weight:700;")
-        lay.addWidget(self.lbl_current)
-
-        lay.addWidget(self._build_mapping_group())
-        return panel
-
-    def _build_mapping_group(self):
-        gb = QGroupBox("端口角色映射（默认位置，可按实际管路调整）")
-        g = QGridLayout(gb)
-        self.map_spins = OrderedDict()
-        roles = list(self.mapping.keys())
-        half = (len(roles) + 1) // 2
-        for i, role in enumerate(roles):
-            col = (i // half) * 2
-            row = i % half
-            g.addWidget(QLabel(role), row, col)
-            sp = QSpinBox()
-            sp.setRange(1, self.port_count)
-            sp.setValue(int(self.mapping[role]))
-            sp.valueChanged.connect(self._on_mapping_changed)
-            self.map_spins[role] = sp
-            g.addWidget(sp, row, col + 1)
-        r = half + 1
-        g.addWidget(QLabel("阀总端口数"), r, 0)
-        self.spn_count = QSpinBox()
-        self.spn_count.setRange(4, 15)
-        self.spn_count.setValue(self.port_count)
-        self.spn_count.valueChanged.connect(self._on_count_changed)
-        g.addWidget(self.spn_count, r, 1)
-        btn_default = QPushButton("恢复默认")
-        btn_default.clicked.connect(self._reset_mapping)
-        btn_save = QPushButton("保存配置")
-        btn_save.clicked.connect(self._save_mapping)
-        g.addWidget(btn_default, r, 2)
-        g.addWidget(btn_save, r, 3)
-        return gb
-
-    # ================= 日志 =================
-    def _append_log(self, msg):
-        import time
-        self.log.appendPlainText(time.strftime("[%H:%M:%S] ") + msg)
+    def _on_task_done(self, desc):
+        self._set_busy(False)
+        if desc == "自动流程":
+            self.op_iter = None
+            self.pending = None
+        else:
+            if self.pending is None:
+                self.op_iter = None
+                self.flow_sig.emit("✅ 全部步骤已完成，再次点击将从头开始")
+            else:
+                self.flow_sig.emit(f"下一步: {op_label(self.pending)}")
+        self._append_log(f"完成: {desc}")
 
     def _on_task_failed(self, msg):
-        self._append_log(f"[错误] {msg}")
-        self._finish_workflow(advance=False)
-        if self.pump is not None:
-            self.valve.set_current(self.pump.current_port)
-            self._update_current_label()
+        self._set_busy(False)
+        self.op_iter = None
+        self.pending = None
+        self._append_log(f"[错误] {msg}（流程已停止）")
+        self.flow_sig.emit("⚠ 执行中断，请检查原因后重新执行")
+
+    # ================= 方案管理 =================
+    def _refresh_flow_combo(self, select=None):
+        self.cmb_flow.blockSignals(True)
+        self.cmb_flow.clear()
+        self.cmb_flow.addItems(list_flows())
+        if select is not None:
+            idx = self.cmb_flow.findText(select)
+            if idx >= 0:
+                self.cmb_flow.setCurrentIndex(idx)
+        self.cmb_flow.blockSignals(False)
+
+    def _new_flow(self):
+        self.steps = []
+        self.edt_name.clear()
+        self._refresh_table()
+        self._invalidate("新建流程，请添加步骤")
+
+    def _load_flow(self):
+        name = self.cmb_flow.currentText()
+        if not name:
+            return
+        self.steps = get_flow(name)
+        self.edt_name.setText(name)
+        self._refresh_table()
+        self._invalidate(f"已加载「{name}」，请重新校验")
+        self._append_log(f"已加载方案「{name}」（{len(self.steps)} 步）")
+
+    def _save_flow(self):
+        name = self.edt_name.text().strip()
+        if not name:
+            QMessageBox.warning(self, "提示", "请先输入方案名称。")
+            return
+        save_flow(name, self.steps)
+        self._refresh_flow_combo(select=name)
+        self._append_log(f"方案「{name}」已保存（{len(self.steps)} 步）")
+
+    def _delete_flow(self):
+        name = self.cmb_flow.currentText()
+        if not name:
+            return
+        if QMessageBox.question(self, "删除方案", f"确定删除方案「{name}」？") != QMessageBox.Yes:
+            return
+        delete_flow(name)
+        self._refresh_flow_combo()
+        self._append_log(f"方案「{name}」已删除")
 
     # ================= 设备 =================
     def _refresh_ports(self):
@@ -467,7 +500,7 @@ class MainWindow(QMainWindow):
                 return
             pump = Sy01SerialPump(port, int(self.cmb_baud.currentText()),
                                   self.spn_addr.value(), steps_per_sec=4000.0,
-                                  stroke_ul=self.wf_params["stroke_ul"],
+                                  stroke_ul=float(self.settings["stroke_ul"]),
                                   log=self.log_sig.emit)
             try:
                 pump.open()
@@ -477,97 +510,15 @@ class MainWindow(QMainWindow):
             self.pump = pump
             self.btn_connect.setText("断开设备")
         else:
-            self.runner.clear()
-            self.pump.emergency_stop()
+            self._stop()
             self.pump.close()
             self.pump = None
             self.btn_connect.setText("连接设备")
 
-    def _require_pump(self):
-        if self.pump is None:
-            QMessageBox.information(self, "提示", "请先连接设备。")
-            return None
-        return self.pump
+    # ================= 日志 =================
+    def _append_log(self, msg):
+        self.log.appendPlainText(time.strftime("[%H:%M:%S] ") + msg)
 
-    def _do_estop(self):
-        if self.pump is None:
-            return
-        self.runner.clear()
-        self.pump.emergency_stop()
-        self._finish_workflow()
-        self._append_log("[急停] 已发送 T 指令并清空队列")
-
-    def _on_valve_clicked(self, port):
-        if self.wf_running:
-            QMessageBox.information(self, "提示", "自动流程执行中，请先停止。")
-            return
-        pump = self._require_pump()
-        if not pump:
-            return
-        role = self.valve.role_of(port)
-        desc = f"阀→Port {port}" + (f"({role})" if role else "")
-        self.runner.submit(desc, lambda: pump.valve_goto(port))
-
-    # ================= 状态同步 =================
-    def _on_task_done(self, desc):
-        if self.pump is None:
-            return
-        if desc == "自动流程":
-            self._finish_workflow(advance=True)
-        elif desc.startswith("阀"):
-            self.valve.set_current(self.pump.current_port)
-            self._update_current_label()
-        self._append_log(f"完成: {desc}")
-
-    def _update_current_label(self):
-        port = self.valve.current_port
-        role = self.valve.role_of(port)
-        text = f"当前端口：{port}" + (f"（{role}）" if role else "")
-        color = role_color(role) if role else "#334155"
-        self.lbl_current.setText(text)
-        self.lbl_current.setStyleSheet(f"font-size:15px; font-weight:700; color:{color};")
-
-    # ================= 映射配置 =================
-    def _read_mapping(self):
-        return OrderedDict((role, sp.value()) for role, sp in self.map_spins.items())
-
-    def _sync_valve_config(self):
-        self.valve.set_config(self.port_count, self.mapping)
-        self._update_current_label()
-
-    def _on_mapping_changed(self):
-        self.mapping = self._read_mapping()
-        self._sync_valve_config()
-        self._refresh_role_combos()
-
-    def _on_count_changed(self, count):
-        self.port_count = count
-        for sp in self.map_spins.values():
-            sp.setRange(1, count)
-        self._on_mapping_changed()
-
-    def _reset_mapping(self):
-        self.port_count = DEFAULT_PORT_COUNT
-        self.mapping = OrderedDict(DEFAULT_PORT_MAP)
-        self.spn_count.blockSignals(True)
-        self.spn_count.setValue(DEFAULT_PORT_COUNT)
-        self.spn_count.blockSignals(False)
-        for role, sp in self.map_spins.items():
-            sp.blockSignals(True)
-            sp.setValue(int(self.mapping[role]))
-            sp.blockSignals(False)
-        self._sync_valve_config()
-        self._append_log("端口映射已恢复默认。")
-
-    def _save_mapping(self):
-        self.mapping = self._read_mapping()
-        if not save_config(self.port_count, self.mapping):
-            QMessageBox.warning(self, "保存失败", "存在重复端口或端口超出范围，请检查映射。")
-            return
-        self._append_log(f"配置已保存: 阀 {self.port_count} 口, "
-                         + ", ".join(f"{r}={p}" for r, p in self.mapping.items()))
-
-    # ================= 关闭 =================
     def closeEvent(self, event):
         self.runner.clear()
         self.runner.shutdown()

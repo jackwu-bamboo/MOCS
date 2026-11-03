@@ -164,7 +164,6 @@ class Sy01SerialPump:
 
     def init_pump(self):
         """半力度初始化 (250μL 进样器), 轮询位置归零确认。"""
-        self._abort = False
         self._log("[初始化] Z1R 半力度 ...")
 
         def verify():
@@ -193,7 +192,6 @@ class Sy01SerialPump:
 
     def valve_goto(self, port: int):
         port = int(port)
-        self._abort = False
 
         def verify():
             return self.wait_valve(port, timeout=4.0)
@@ -204,7 +202,6 @@ class Sy01SerialPump:
 
     def plunger_goto(self, steps: int):
         steps = max(0, min(FULL_STROKE_STEPS, int(steps)))
-        self._abort = False
         est = abs(steps - self.current_steps) / self.steps_per_sec + 1.0
 
         def verify():
