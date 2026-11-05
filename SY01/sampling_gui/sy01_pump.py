@@ -16,6 +16,8 @@ import time
 import serial
 
 FULL_STROKE_STEPS = 12000  # 额定行程 30mm / 12000 步
+SYRINGE_OPTIONS = (250.0, 500.0)  # 可选进样器满行程体积 μL (界面下拉框的全部选项)
+DEFAULT_SYRINGE_UL = 500.0        # 默认进样器规格
 
 ERROR_NAMES = {
     0: "无误", 1: "初始化错误", 2: "无效指令", 3: "无效参数",
@@ -31,7 +33,7 @@ class PumpError(Exception):
 
 class Sy01SerialPump:
     def __init__(self, port: str, baudrate: int = 9600, address_switch: int = 0,
-                 steps_per_sec: float = 4000.0, stroke_ul: float = 250.0, log=None):
+                 steps_per_sec: float = 4000.0, stroke_ul: float = DEFAULT_SYRINGE_UL, log=None):
         self.port = port
         self.baudrate = baudrate
         self.addr = chr(0x31 + address_switch)
@@ -163,7 +165,7 @@ class Sy01SerialPump:
         raise PumpError(f"{desc}: 多次尝试未确认完成")
 
     def init_pump(self):
-        """半力度初始化 (250μL 进样器), 轮询位置归零确认。"""
+        """半力度初始化 (250 / 500 μL 进样器均用半力度), 轮询位置归零确认。"""
         self._log("[初始化] Z1R 半力度 ...")
 
         def verify():

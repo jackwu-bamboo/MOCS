@@ -16,10 +16,10 @@ from command_runner import CommandRunner
 from sampling_workflow import (
     INIT_WAIT_S, KIND_LABEL, TYPE_KIND, build_segments, delete_flow, execute_op,
     get_flow, get_settings, iter_ops, list_flows, op_label, save_flow,
-    set_port_count, validate,
+    set_port_count, set_syringe_ul, validate,
 )
 from styles import COMBO_VIEW_QSS
-from sy01_pump import PumpError, Sy01SerialPump
+from sy01_pump import SYRINGE_OPTIONS, PumpError, Sy01SerialPump
 
 
 class _ComboDelegate(QStyledItemDelegate):
@@ -143,7 +143,7 @@ class MainWindow(QMainWindow):
             g.addWidget(b, 2, i)
         lay.addWidget(gb)
 
-        gb = QGroupBox("端口说明")
+        gb = QGroupBox("设备设置")
         g = QGridLayout(gb)
         self.spn_ports = QSpinBox()
         self.spn_ports.setRange(4, 15)
@@ -151,9 +151,15 @@ class MainWindow(QMainWindow):
         self.spn_ports.valueChanged.connect(self._on_port_count_changed)
         g.addWidget(QLabel("阀口总数"), 0, 0)
         g.addWidget(self.spn_ports, 0, 1)
+        self.cmb_syringe = QComboBox()
+        self.cmb_syringe.addItems([f"{int(v)} μL" for v in SYRINGE_OPTIONS])
+        self.cmb_syringe.setCurrentIndex(SYRINGE_OPTIONS.index(float(self.settings["stroke_ul"])))
+        self.cmb_syringe.currentIndexChanged.connect(self._on_syringe_changed)
+        g.addWidget(QLabel("进样器规格"), 1, 0)
+        g.addWidget(self.cmb_syringe, 1, 1)
         hint = QLabel("流程中直接使用端口号（1 – 阀口总数）。")
         hint.setWordWrap(True)
-        g.addWidget(hint, 1, 0, 1, 2)
+        g.addWidget(hint, 2, 0, 1, 2)
         lay.addWidget(gb)
         lay.addStretch(1)
         return panel
@@ -191,7 +197,7 @@ class MainWindow(QMainWindow):
         self.spn_port = QSpinBox()
         self.spn_port.setRange(1, int(self.settings["port_count"]))
         self.spn_ul = QDoubleSpinBox()
-        self.spn_ul.setRange(0.1, 250.0)
+        self.spn_ul.setRange(0.1, float(self.settings["stroke_ul"]))
         self.spn_ul.setValue(50.0)
         self.spn_ul.setSuffix(" μL")
         self.spn_sec = QDoubleSpinBox()
@@ -265,6 +271,16 @@ class MainWindow(QMainWindow):
             widget.setVisible(show)
         if text == "初始化":
             self.spn_sec.setValue(INIT_WAIT_S)
+
+    def _on_syringe_changed(self, idx):
+        ul = SYRINGE_OPTIONS[idx]
+        set_syringe_ul(ul)
+        self.settings["stroke_ul"] = ul
+        self.spn_ul.setRange(0.1, ul)  # 超出新容量的输入值会被自动收紧
+        if self.pump is not None:
+            self.pump.stroke_ul = ul
+        self._append_log(f"进样器规格已设为 {int(ul)} μL")
+        self._invalidate("进样器规格已修改，请重新校验")
 
     def _on_port_count_changed(self, n):
         set_port_count(n)

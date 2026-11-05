@@ -6,7 +6,14 @@ from sampling_workflow import (
     build_segments, execute_op, iter_ops, validate,
 )
 
-SETTINGS = dict(port_count=10, stroke_ul=250.0)
+from sy01_pump import FULL_STROKE_STEPS, DEFAULT_SYRINGE_UL
+
+SETTINGS = dict(port_count=10, stroke_ul=DEFAULT_SYRINGE_UL)
+
+
+def st(ul):
+    """体积 μL -> 期望步数, 随进样器规格自动换算。"""
+    return round(FULL_STROKE_STEPS * ul / DEFAULT_SYRINGE_UL)
 
 
 def S(kind, **kw):
@@ -90,13 +97,13 @@ class ValidateTests(unittest.TestCase):
         self.assertIn("液量", errs[0])
 
     def test_inject_over_capacity(self):
-        steps = [INIT, S("inject", ul=200), S("inject", ul=100)]
+        steps = [INIT, S("inject", ul=DEFAULT_SYRINGE_UL * 0.8), S("inject", ul=DEFAULT_SYRINGE_UL * 0.5)]
         errs, _ = validate(steps, SETTINGS)
         self.assertIn("第 3 步", errs[0])
         self.assertIn("超过容量", errs[0])
 
     def test_loop_drift_detected_on_last_round(self):
-        # 每轮净增 20 μL: 第 1 轮峰值 50, 第 100 轮末超过 250 的时刻
+        # 每轮净增 20 μL: 第 1 轮峰值 50, 第 100 轮末必然超过容量 (任何规格)
         steps = [INIT, S("loop_start", count=100), S("inject", ul=50), S("push", ul=30), S("loop_end")]
         errs, _ = validate(steps, SETTINGS)
         self.assertTrue(errs)
@@ -128,7 +135,7 @@ class ExecutionTests(unittest.TestCase):
         steps = [INIT, S("valve", port=2), S("inject", ul=50), S("valve", port=8), S("push", ul=50)]
         calls = self.run_flow(steps)
         self.assertEqual(calls, [
-            ("init",), ("valve", 2), ("plunger", 2400), ("valve", 8), ("plunger", 0),
+            ("init",), ("valve", 2), ("plunger", st(50)), ("valve", 8), ("plunger", 0),
         ])
 
     def test_init_runs_once_loop_body_repeats(self):
@@ -137,8 +144,8 @@ class ExecutionTests(unittest.TestCase):
         calls = self.run_flow(steps)
         self.assertEqual(sum(1 for c in calls if c[0] == "init"), 1)
         self.assertEqual(calls, [
-            ("init",), ("valve", 2), ("plunger", 2400), ("valve", 8), ("plunger", 0),
-            ("valve", 2), ("plunger", 2400), ("valve", 8), ("plunger", 0),
+            ("init",), ("valve", 2), ("plunger", st(50)), ("valve", 8), ("plunger", 0),
+            ("valve", 2), ("plunger", st(50)), ("valve", 8), ("plunger", 0),
         ])
 
     def test_round_labels(self):

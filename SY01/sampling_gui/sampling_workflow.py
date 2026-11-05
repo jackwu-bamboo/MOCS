@@ -16,11 +16,13 @@ import os
 import time
 
 from port_config import app_dir
-from sy01_pump import FULL_STROKE_STEPS, PumpError
+from sy01_pump import (
+    DEFAULT_SYRINGE_UL, FULL_STROKE_STEPS, SYRINGE_OPTIONS, PumpError,
+)
 
 CONFIG_FILE = os.path.join(app_dir(), "workflow_config.json")
 VERSION = 2
-DEFAULT_SETTINGS = dict(port_count=10, stroke_ul=250.0)
+DEFAULT_SETTINGS = dict(port_count=10, stroke_ul=DEFAULT_SYRINGE_UL)
 INIT_WAIT_S = 3.0
 EPS = 1e-6
 
@@ -55,6 +57,8 @@ def load_store():
         return _empty_store()
     settings = dict(DEFAULT_SETTINGS)
     settings.update(data.get("settings", {}))
+    if float(settings.get("stroke_ul", 0)) not in SYRINGE_OPTIONS:
+        settings["stroke_ul"] = DEFAULT_SYRINGE_UL  # 存档值非法时回退默认规格
     data["settings"] = settings
     data.setdefault("flows", {})
     return data
@@ -82,6 +86,15 @@ def delete_flow(name):
 
 def get_settings():
     return dict(load_store()["settings"])
+
+
+def set_syringe_ul(ul):
+    ul = float(ul)
+    if ul not in SYRINGE_OPTIONS:
+        raise ValueError(f"不支持的进样器规格: {ul}")
+    store = load_store()
+    store["settings"]["stroke_ul"] = ul
+    _write(store)
 
 
 def set_port_count(n):
