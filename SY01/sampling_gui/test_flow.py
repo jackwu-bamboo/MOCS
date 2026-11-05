@@ -6,9 +6,9 @@ from sampling_workflow import (
     build_segments, execute_op, iter_ops, validate,
 )
 
-from sy01_pump import FULL_STROKE_STEPS, DEFAULT_SYRINGE_UL
+from sy01_pump import DEFAULT_FLOW_UL_S, DEFAULT_SYRINGE_UL, FULL_STROKE_STEPS, Sy01SerialPump
 
-SETTINGS = dict(port_count=10, stroke_ul=DEFAULT_SYRINGE_UL)
+SETTINGS = dict(port_count=10, stroke_ul=DEFAULT_SYRINGE_UL, flow_speed_ul_s=DEFAULT_FLOW_UL_S)
 
 
 def st(ul):
@@ -158,6 +158,32 @@ class ExecutionTests(unittest.TestCase):
         calls = self.run_flow(steps)
         self.assertEqual(calls, [("init",)])
 
+
+class SpeedTests(unittest.TestCase):
+
+    def test_default_speed_matches_pump_4000_pps(self):
+        # 默认 μL/s 换算回脉冲速度应等于泵实测的 4000 脉冲/秒
+        pump = Sy01SerialPump("X", stroke_ul=DEFAULT_SYRINGE_UL, speed_ul_s=DEFAULT_FLOW_UL_S)
+        self.assertEqual(pump.pulse_per_s, 4000)
+
+    def test_speed_out_of_range_rejected(self):
+        steps = [INIT, S("inject", ul=10)]
+        errs, _ = validate(steps, dict(SETTINGS, flow_speed_ul_s=DEFAULT_SYRINGE_UL * 2))
+        self.assertTrue(any("速度" in e for e in errs))
+
+    def test_move_command_carries_velocity(self):
+        pump = Sy01SerialPump("X", stroke_ul=500.0, speed_ul_s=250.0)
+        sent = []
+        pump._motion = lambda body, verify, desc, max_tries=3: sent.append(body)
+        pump.plunger_goto(2400)
+        # 250 μL/s @ 500 μL 规格 -> 6000 脉冲/秒
+        self.assertEqual(sent, ["V6000A2400R"])
+
+    def test_speed_follows_syringe_when_ul_s_kept(self):
+        pump = Sy01SerialPump("X", stroke_ul=250.0, speed_ul_s=100.0)
+        self.assertEqual(pump.pulse_per_s, 4800)
+        pump.stroke_ul = 500.0
+        self.assertEqual(pump.pulse_per_s, 2400)
 
 if __name__ == "__main__":
     unittest.main()

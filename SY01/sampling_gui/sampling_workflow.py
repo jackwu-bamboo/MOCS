@@ -17,12 +17,13 @@ import time
 
 from port_config import app_dir
 from sy01_pump import (
-    DEFAULT_SYRINGE_UL, FULL_STROKE_STEPS, SYRINGE_OPTIONS, PumpError,
+    DEFAULT_FLOW_UL_S, DEFAULT_SYRINGE_UL, FULL_STROKE_STEPS, SYRINGE_OPTIONS,
+    PumpError, flow_range_ul_s,
 )
 
 CONFIG_FILE = os.path.join(app_dir(), "workflow_config.json")
 VERSION = 2
-DEFAULT_SETTINGS = dict(port_count=10, stroke_ul=DEFAULT_SYRINGE_UL)
+DEFAULT_SETTINGS = dict(port_count=10, stroke_ul=DEFAULT_SYRINGE_UL, flow_speed_ul_s=DEFAULT_FLOW_UL_S)
 INIT_WAIT_S = 3.0
 EPS = 1e-6
 
@@ -94,6 +95,16 @@ def set_syringe_ul(ul):
         raise ValueError(f"不支持的进样器规格: {ul}")
     store = load_store()
     store["settings"]["stroke_ul"] = ul
+    _write(store)
+
+
+def set_flow_speed_ul_s(ul_s):
+    store = load_store()
+    lo, hi = flow_range_ul_s(float(store["settings"]["stroke_ul"]))
+    ul_s = float(ul_s)
+    if not lo <= ul_s <= hi:
+        raise ValueError(f"速度 {ul_s:g} μL/s 超出范围 {lo:.2f}–{hi:.2f}")
+    store["settings"]["flow_speed_ul_s"] = ul_s
     _write(store)
 
 
@@ -204,8 +215,12 @@ def validate(steps, settings):
         return ["流程为空，请先添加步骤。"], None
     stroke = float(settings["stroke_ul"])
     ports = int(settings["port_count"])
+    speed = float(settings.get("flow_speed_ul_s", DEFAULT_FLOW_UL_S))
+    lo, hi = flow_range_ul_s(stroke)
     kinds = [s["kind"] for s in steps]
     errs = []
+    if not lo <= speed <= hi:
+        errs.append(f"注入/推出速度 {speed:g} μL/s 超出范围 {lo:.2f}–{hi:.2f} μL/s。")
     if kinds[0] != "init":
         errs.append("第 1 步必须是「初始化」。")
     if kinds.count("init") != 1:

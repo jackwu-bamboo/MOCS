@@ -16,10 +16,13 @@ from command_runner import CommandRunner
 from sampling_workflow import (
     INIT_WAIT_S, KIND_LABEL, TYPE_KIND, build_segments, delete_flow, execute_op,
     get_flow, get_settings, iter_ops, list_flows, op_label, save_flow,
-    set_port_count, set_syringe_ul, validate,
+    set_flow_speed_ul_s, set_port_count, set_syringe_ul, validate,
 )
 from styles import COMBO_VIEW_QSS
-from sy01_pump import SYRINGE_OPTIONS, PumpError, Sy01SerialPump
+from sy01_pump import (
+    DEFAULT_PULSE_PER_S, PULSE_MAX, PULSE_MIN, SYRINGE_OPTIONS, PumpError,
+    Sy01SerialPump, flow_range_ul_s, ul_s_to_pulse,
+)
 
 
 class _ComboDelegate(QStyledItemDelegate):
@@ -157,9 +160,21 @@ class MainWindow(QMainWindow):
         self.cmb_syringe.currentIndexChanged.connect(self._on_syringe_changed)
         g.addWidget(QLabel("进样器规格"), 1, 0)
         g.addWidget(self.cmb_syringe, 1, 1)
+        self.spn_speed = QDoubleSpinBox()
+        self.spn_speed.setDecimals(2)
+        self.spn_speed.setSuffix(" μL/s")
+        self.spn_speed.setRange(*flow_range_ul_s(float(self.settings["stroke_ul"])))
+        self.spn_speed.setValue(float(self.settings["flow_speed_ul_s"]))
+        self.spn_speed.valueChanged.connect(self._on_speed_changed)
+        self.lbl_pps = QLabel()
+        self.lbl_pps.setStyleSheet("color:#7fa39b;")
+        g.addWidget(QLabel("注入/推出速度"), 2, 0)
+        g.addWidget(self.spn_speed, 2, 1)
+        g.addWidget(self.lbl_pps, 3, 0, 1, 2)
+        self._update_pps_label()
         hint = QLabel("流程中直接使用端口号（1 – 阀口总数）。")
         hint.setWordWrap(True)
-        g.addWidget(hint, 2, 0, 1, 2)
+        g.addWidget(hint, 4, 0, 1, 2)
         lay.addWidget(gb)
         lay.addStretch(1)
         return panel
@@ -277,10 +292,25 @@ class MainWindow(QMainWindow):
         set_syringe_ul(ul)
         self.settings["stroke_ul"] = ul
         self.spn_ul.setRange(0.1, ul)  # 超出新容量的输入值会被自动收紧
+        self.spn_speed.setRange(*flow_range_ul_s(ul))  # 流速 μL/s 保持不变, 脉冲速度随规格变化
         if self.pump is not None:
             self.pump.stroke_ul = ul
+        self._update_pps_label()
         self._append_log(f"进样器规格已设为 {int(ul)} μL")
         self._invalidate("进样器规格已修改，请重新校验")
+
+    def _on_speed_changed(self, ul_s):
+        set_flow_speed_ul_s(ul_s)
+        self.settings["flow_speed_ul_s"] = float(ul_s)
+        if self.pump is not None:
+            self.pump.set_speed(ul_s)
+        self._update_pps_label()
+        self._invalidate("注入/推出速度已修改，请重新校验")
+
+    def _update_pps_label(self):
+        pps = ul_s_to_pulse(self.spn_speed.value(), float(self.settings["stroke_ul"]))
+        pps = max(PULSE_MIN, min(PULSE_MAX, pps))
+        self.lbl_pps.setText(f"换算: 最快速度 V = {pps} 脉冲/秒（泵上电默认 {DEFAULT_PULSE_PER_S}）")
 
     def _on_port_count_changed(self, n):
         set_port_count(n)
@@ -515,7 +545,8 @@ class MainWindow(QMainWindow):
                 QMessageBox.warning(self, "提示", "请先选择串口。")
                 return
             pump = Sy01SerialPump(port, int(self.cmb_baud.currentText()),
-                                  self.spn_addr.value(), steps_per_sec=4000.0,
+                                  self.spn_addr.value(),
+                                  speed_ul_s=float(self.settings["flow_speed_ul_s"]),
                                   stroke_ul=float(self.settings["stroke_ul"]),
                                   log=self.log_sig.emit)
             try:

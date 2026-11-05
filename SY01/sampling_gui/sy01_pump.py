@@ -18,6 +18,19 @@ import serial
 FULL_STROKE_STEPS = 12000  # 额定行程 30mm / 12000 步
 SYRINGE_OPTIONS = (250.0, 500.0)  # 可选进样器满行程体积 μL (界面下拉框的全部选项)
 DEFAULT_SYRINGE_UL = 500.0        # 默认进样器规格
+DEFAULT_PULSE_PER_S = 4000        # 泵当前最快速度 ?2 实测值 (脉冲/秒)
+PULSE_MIN, PULSE_MAX = 1, 12000   # V 指令允许范围 (脉冲/秒)
+DEFAULT_FLOW_UL_S = DEFAULT_PULSE_PER_S * DEFAULT_SYRINGE_UL / FULL_STROKE_STEPS  # 默认流速 μL/s
+
+
+def flow_range_ul_s(stroke_ul):
+    """注入/推出速度允许范围 (μL/s), 由进样器规格换算。"""
+    return (PULSE_MIN * stroke_ul / FULL_STROKE_STEPS,
+            PULSE_MAX * stroke_ul / FULL_STROKE_STEPS)
+
+
+def ul_s_to_pulse(ul_s, stroke_ul):
+    return int(round(ul_s * FULL_STROKE_STEPS / stroke_ul))
 
 ERROR_NAMES = {
     0: "无误", 1: "初始化错误", 2: "无效指令", 3: "无效参数",
@@ -33,12 +46,12 @@ class PumpError(Exception):
 
 class Sy01SerialPump:
     def __init__(self, port: str, baudrate: int = 9600, address_switch: int = 0,
-                 steps_per_sec: float = 4000.0, stroke_ul: float = DEFAULT_SYRINGE_UL, log=None):
+                 stroke_ul: float = DEFAULT_SYRINGE_UL, speed_ul_s: float = DEFAULT_FLOW_UL_S, log=None):
         self.port = port
         self.baudrate = baudrate
         self.addr = chr(0x31 + address_switch)
-        self.steps_per_sec = max(100.0, steps_per_sec)
         self.stroke_ul = max(1.0, float(stroke_ul))
+        self.speed_ul_s = float(speed_ul_s)
         self._log = log or (lambda msg: None)
         self._ser = None
         self._lock = threading.Lock()
@@ -202,14 +215,25 @@ class Sy01SerialPump:
         self._motion(f"{'I' if cw else 'O'}{port}R", verify, desc=f"阀→Port {port}")
         self.current_port = port
 
+    @property
+    def pulse_per_s(self) -> int:
+        """当前注入/推出的最快速度 (脉冲/秒), 由 μL/s 与进样器规格换算, 并限制在 V 指令范围内。"""
+        p = ul_s_to_pulse(self.speed_ul_s, self.stroke_ul)
+        return max(PULSE_MIN, min(PULSE_MAX, p))
+
+    def set_speed(self, ul_s: float):
+        self.speed_ul_s = float(ul_s)
+
     def plunger_goto(self, steps: int):
         steps = max(0, min(FULL_STROKE_STEPS, int(steps)))
-        est = abs(steps - self.current_steps) / self.steps_per_sec + 1.0
+        pps = self.pulse_per_s
+        est = abs(steps - self.current_steps) / pps + 1.0
 
         def verify():
             return self.wait_position(steps, timeout=max(5.0, est + 3.0))
 
-        self._motion(f"A{steps}R", verify, desc=f"活塞→{steps}")
+        # V 与 A 放在同一条指令中: 每次移动都以当前设定的最快速度执行
+        self._motion(f"V{pps}A{steps}R", verify, desc=f"活塞→{steps} ({self.speed_ul_s:g} μL/s)")
         self.current_steps = steps
 
     # ---------- 体积换算 ----------
