@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>界面原型 v2 · 自动采样和分发控制模块</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #e9eef5; font-family: "Microsoft YaHei", Arial, sans-serif; font-size: 13px; color: #1f2937; }
+  .window { width: 1280px; margin: 16px auto; background: #f4f6f9; border: 1px solid #c9d2de; border-radius: 6px; overflow: hidden; }
+  .titlebar { background: #2f6fd6; color: #fff; padding: 8px 14px; font-weight: 700; font-size: 14px; }
+  .top { display: flex; gap: 10px; padding: 10px; }
+  .side { width: 330px; display: flex; flex-direction: column; gap: 10px; }
+  .main { flex: 1; display: flex; flex-direction: column; gap: 10px; }
+  .group { background: #fff; border: 1px solid #d5dde8; border-radius: 6px; padding: 10px; }
+  .group h3 { margin: 0 0 8px; font-size: 13px; color: #2f6fd6; }
+  .row { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+  .row label { width: 64px; color: #4b5563; flex-shrink: 0; }
+  input, select { height: 26px; border: 1px solid #b8c4d4; border-radius: 4px; padding: 0 6px; background: #fff; font-size: 13px; }
+  input[type=number] { width: 90px; }
+  .grow { flex: 1; min-width: 0; }
+  .grow select, .grow input { width: 100%; }
+  button { height: 28px; padding: 0 12px; border: 1px solid #2f6fd6; border-radius: 4px; background: #fff; color: #2f6fd6; cursor: pointer; font-size: 13px; white-space: nowrap; }
+  button.primary { background: #2f6fd6; color: #fff; }
+  button.danger { border-color: #d64545; color: #d64545; }
+  button.small { height: 24px; padding: 0 8px; font-size: 12px; }
+  .btns { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  th, td { border-bottom: 1px solid #e5eaf1; padding: 6px 6px; text-align: left; }
+  th { background: #f1f5fa; color: #4b5563; font-weight: 600; }
+  tr.sel td { background: #eaf2ff; }
+  tr { cursor: pointer; }
+  .idx { width: 36px; color: #8a96a8; }
+  .tag { display: inline-block; padding: 1px 7px; border-radius: 3px; font-size: 12px; color: #fff; }
+  .t-valve { background: #7c3aed; }
+  .t-in { background: #0ea5a4; }
+  .t-out { background: #ea580c; }
+  .t-wait { background: #64748b; }
+  .t-loop { background: #2f6fd6; }
+  td.ind { padding-left: 22px; border-left: 3px solid #2f6fd6; }
+  .addform { background: #f8fafc; border: 1px dashed #b8c4d4; border-radius: 6px; padding: 10px; }
+  .hint { color: #8a96a8; font-size: 12px; }
+  .ok-box { background: #f0fdf4; border: 1px solid #bbf7d0; color: #15803d; border-radius: 4px; padding: 6px 8px; margin-top: 8px; }
+  .err-box { background: #fef2f2; border: 1px solid #fecaca; color: #b91c1c; border-radius: 4px; padding: 6px 8px; margin-top: 8px; }
+  .log { background: #0f172a; color: #cbd5e1; font-family: Consolas, monospace; font-size: 12px; padding: 8px; border-radius: 4px; height: 96px; overflow: hidden; white-space: pre; }
+  .bottom { padding: 0 10px 10px; }
+  .exec { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+  .exec .sep { flex: 1; }
+</style>
+</head>
+<body>
+<div class="window">
+  <div class="titlebar">自动采样和分发控制模块</div>
+
+  <div class="top">
+
+    <!-- 左栏：设备与方案 -->
+    <div class="side">
+      <div class="group">
+        <h3>设备连接</h3>
+        <div class="row"><label>串口</label><select class="grow"><option>COM5</option></select><button class="small">刷新</button></div>
+        <div class="row"><label>波特率</label><select class="grow"><option>9600</option><option>38400</option></select></div>
+        <div class="row"><label>泵地址</label><select class="grow"><option>0（字符 '1'）</option></select></div>
+        <div class="btns"><button class="primary">连接设备</button><button class="danger">急停 (T)</button></div>
+      </div>
+
+      <div class="group">
+        <h3>流程方案</h3>
+        <div class="row"><label>已存方案</label><select class="grow"><option>样品分发-A</option></select></div>
+        <div class="row"><label>方案名称</label><input class="grow" value="样品分发-A"></div>
+        <div class="btns"><button class="small">新建</button><button class="small">加载</button><button class="small">保存</button><button class="small danger">删除</button></div>
+      </div>
+
+      <div class="group">
+        <h3>端口说明</h3>
+        <div class="hint" style="line-height:1.8">
+          流程中直接使用<b>端口号</b>（1–10）。<br>
+          阀口总数：10（可在设置中调整）。<br>
+          角色映射（采样口、检测口、废液等）仅作备注，不影响执行。
+        </div>
+      </div>
+    </div>
+
+    <!-- 主区：步骤编辑 -->
+    <div class="main">
+      <div class="group">
+        <h3>流程步骤 <span class="hint">（共 5 步，点击行可选中）</span></h3>
+        <table>
+          <thead><tr><th class="idx">#</th><th>类型</th><th>参数</th></tr></thead>
+          <tbody>
+            <tr><td class="idx">1</td><td><span class="tag t-wait">初始化</span></td><td>Z1R 半力度</td></tr>
+            <tr><td class="idx">2</td><td><span class="tag t-loop">循环开始</span></td><td>共 3 次（不含初始化）</td></tr>
+            <tr class="sel"><td class="idx">3</td><td class="ind"><span class="tag t-valve">切阀</span></td><td>端口 2</td></tr>
+            <tr><td class="idx">4</td><td class="ind"><span class="tag t-in">注入</span></td><td>50 μL</td></tr>
+            <tr><td class="idx">5</td><td class="ind"><span class="tag t-valve">切阀</span></td><td>端口 8</td></tr>
+            <tr><td class="idx">6</td><td class="ind"><span class="tag t-out">推出</span></td><td>50 μL</td></tr>
+            <tr><td class="idx">7</td><td><span class="tag t-loop">循环结束</span></td><td>—</td></tr>
+          </tbody>
+        </table>
+        <div class="btns"><button class="danger small">删除选中行</button></div>
+      </div>
+
+      <div class="group">
+        <h3>添加步骤</h3>
+        <div class="addform">
+          <div class="row"><label>步骤类型</label>
+            <select class="grow" style="max-width:220px">
+              <option>切阀</option><option selected>注入</option><option>推出</option><option>初始化</option><option>等待</option><option>循环开始</option><option>循环结束</option>
+            </select>
+          </div>
+          <div class="row"><label>端口号</label><select style="width:120px"><option>1</option><option>2</option><option>…</option><option>10</option></select>
+            <span class="hint">用于「切阀」</span></div>
+          <div class="row"><label>体积</label><input type="number" value="50"><span>μL</span>
+            <span class="hint" style="margin-left:8px">用于「注入 / 推出」</span></div>
+          <div class="row"><label>循环次数</label><input type="number" value="3"><span>次</span>
+            <span class="hint" style="margin-left:8px">用于「循环开始」（循环体内不可放「初始化」）</span></div>
+          <div class="row"><label>等待时间</label><input type="number" value="3"><span>秒</span>
+            <span class="hint" style="margin-left:8px">用于「等待」「初始化」（切到「初始化」时默认填 3 秒）</span></div>
+          <div class="btns"><button class="primary">添加到末尾</button></div>
+        </div>
+      </div>
+
+      <div class="group">
+        <h3>执行</h3>
+        <div class="exec">
+          <button>校验</button>
+          <button class="primary">▶ 执行流程</button>
+          <button>▶ 执行单步</button>
+          <span class="sep"></span>
+          <button class="danger">■ 停止</button>
+        </div>
+        <div class="ok-box">✓ 校验通过：活塞峰值 50 μL，注射腔最终 0 μL。</div>
+        <div class="err-box" style="display:none">第 5 步：推出 80 μL，注射腔仅余 50 μL，禁止执行。</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 底部：日志 -->
+  <div class="bottom">
+    <div class="group">
+      <h3>日志</h3>
+      <div class="log">[13:50:02] 就绪
+[13:50:05] 方案「样品分发-A」已加载
+[13:50:08] 校验通过，共 5 步</div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

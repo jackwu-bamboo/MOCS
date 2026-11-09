@@ -23,3 +23,6 @@ dist/
 # 临时调试文件
 SY01/_*.txt
 _*.txt
+
+# 配置迁移自动备份
+workflow_config.legacy-*.json

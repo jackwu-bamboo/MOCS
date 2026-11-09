@@ -1,12 +1,177 @@
 {
-  "测试方案A": {
-    "params": {
-      "sample_ul": 25.0,
-      "dead_volume_ul": 60.0,
-      "air_ul": 40.0,
-      "stroke_ul": 250.0
+  "version": 2,
+  "settings": {
+    "port_count": 10,
+    "stroke_ul": 500.0,
+    "flow_speed_ul_s": 166.67
+  },
+  "flows": {
+    "4路分发": {
+      "steps": [
+        {
+          "kind": "init",
+          "wait": 3.0
+        },
+        {
+          "kind": "valve",
+          "port": 2
+        },
+        {
+          "kind": "inject",
+          "ul": 50.0
+        },
+        {
+          "kind": "valve",
+          "port": 8
+        },
+        {
+          "kind": "push",
+          "ul": 50.0
+        },
+        {
+          "kind": "valve",
+          "port": 2
+        },
+        {
+          "kind": "inject",
+          "ul": 150.0
+        },
+        {
+          "kind": "valve",
+          "port": 1
+        },
+        {
+          "kind": "push",
+          "ul": 25.0
+        },
+        {
+          "kind": "valve",
+          "port": 4
+        },
+        {
+          "kind": "push",
+          "ul": 25.0
+        },
+        {
+          "kind": "valve",
+          "port": 7
+        },
+        {
+          "kind": "push",
+          "ul": 25.0
+        },
+        {
+          "kind": "valve",
+          "port": 10
+        },
+        {
+          "kind": "push",
+          "ul": 25.0
+        },
+        {
+          "kind": "valve",
+          "port": 8
+        },
+        {
+          "kind": "push",
+          "ul": 50.0
+        },
+        {
+          "kind": "valve",
+          "port": 9
+        },
+        {
+          "kind": "inject",
+          "ul": 250.0
+        },
+        {
+          "kind": "valve",
+          "port": 1
+        },
+        {
+          "kind": "push",
+          "ul": 250.0
+        },
+        {
+          "kind": "valve",
+          "port": 9
+        },
+        {
+          "kind": "inject",
+          "ul": 250.0
+        },
+        {
+          "kind": "valve",
+          "port": 4
+        },
+        {
+          "kind": "push",
+          "ul": 250.0
+        },
+        {
+          "kind": "valve",
+          "port": 9
+        },
+        {
+          "kind": "inject",
+          "ul": 250.0
+        },
+        {
+          "kind": "valve",
+          "port": 7
+        },
+        {
+          "kind": "push",
+          "ul": 250.0
+        },
+        {
+          "kind": "valve",
+          "port": 9
+        },
+        {
+          "kind": "inject",
+          "ul": 250.0
+        },
+        {
+          "kind": "valve",
+          "port": 10
+        },
+        {
+          "kind": "push",
+          "ul": 250.0
+        }
+      ]
     },
-    "source_role": "采样口1 (Port 2)",
-    "detect_role": "检测口1 (Port 1)"
+    "多次循环": {
+      "steps": [
+        {
+          "kind": "init",
+          "wait": 3.0
+        },
+        {
+          "kind": "loop_start",
+          "count": 5
+        },
+        {
+          "kind": "valve",
+          "port": 2
+        },
+        {
+          "kind": "inject",
+          "ul": 50.0
+        },
+        {
+          "kind": "valve",
+          "port": 1
+        },
+        {
+          "kind": "push",
+          "ul": 50.0
+        },
+        {
+          "kind": "loop_end"
+        }
+      ]
+    }
   }
 }
