@@ -1,15 +1,14 @@
-"""实验流程页：设备连接 → 配置实验（实验信息）。
+"""实验流程页：设备连接（用户选择串口后连接）。
 
-培养参数在"外设控制"页调整；启动/暂停/结束操作在侧边栏"运行"组与运行页执行。
+培养参数在"温度控制"页调整。
 """
-import time
-
 from PyQt5.QtCore import Qt
-from PyQt5.QtWidgets import (QFormLayout, QHBoxLayout, QLabel, QLineEdit,
-                             QMessageBox, QPushButton, QScrollArea, QVBoxLayout,
-                             QWidget)
+from PyQt5.QtWidgets import (QComboBox, QHBoxLayout, QLabel, QPushButton,
+                             QScrollArea, QVBoxLayout, QWidget)
 
-from app.simulator import DEVICE_NAMES, ExpState
+from serial.tools import list_ports
+
+from app.simulator import DEVICE_NAMES
 from app.widgets import Card, StatusCard
 
 BADGE_STYLES = {
@@ -71,27 +70,18 @@ class WorkflowPage(QWidget):
 
         self.step1 = StepCard(1, "设备连接")
         self._build_step1()
-        self.step2 = StepCard(2, "配置实验")
-        self._build_step2()
-        for s in (self.step1, self.step2):
-            root.addWidget(s)
+        root.addWidget(self.step1)
 
         status_card = Card("运行状态")
         self.run_label = QLabel("")
         self.run_label.setWordWrap(True)
-        self.btn_next = QPushButton("新建下一个实验")
-        self.btn_next.clicked.connect(self.new_exp)
-        self.btn_next.setVisible(False)
-        status_row = QHBoxLayout()
-        status_row.addWidget(self.btn_next)
-        status_row.addStretch(1)
         status_card.body.addWidget(self.run_label)
-        status_card.body.addLayout(status_row)
         root.addWidget(status_card)
         root.addStretch(1)
 
         sim.states_updated.connect(self.refresh)
         sim.exp_state_changed.connect(lambda _: self.refresh())
+        self.refresh_ports()
         self.refresh()
 
     # ---- 步骤① 设备连接 ----
@@ -104,92 +94,80 @@ class WorkflowPage(QWidget):
             row.addWidget(card)
         self.step1.content_lay.addLayout(row)
 
+        # 恒温槽串口
+        bath_row = QHBoxLayout()
+        bath_row.addWidget(QLabel("恒温槽串口:"))
+        self.bath_combo = QComboBox()
+        self.bath_combo.setMinimumWidth(170)
+        bath_row.addWidget(self.bath_combo, 1)
+        self.btn_connect_bath = QPushButton("连接")
+        self.btn_connect_bath.clicked.connect(self._connect_bath)
+        bath_row.addWidget(self.btn_connect_bath)
+        self.step1.content_lay.addLayout(bath_row)
+
+        # 盒内温度传感器串口
+        sensor_row = QHBoxLayout()
+        sensor_row.addWidget(QLabel("传感器串口:"))
+        self.sensor_combo = QComboBox()
+        self.sensor_combo.setMinimumWidth(170)
+        sensor_row.addWidget(self.sensor_combo, 1)
+        self.btn_connect_sensor = QPushButton("连接")
+        self.btn_connect_sensor.clicked.connect(self._connect_sensor)
+        sensor_row.addWidget(self.btn_connect_sensor)
+        self.step1.content_lay.addLayout(sensor_row)
+
+        # 刷新 + 断开 + 状态
         btns = QHBoxLayout()
-        self.btn_connect = QPushButton("连接全部设备")
+        self.btn_refresh = QPushButton("刷新串口列表")
+        self.btn_refresh.clicked.connect(self.refresh_ports)
         self.btn_disconnect = QPushButton("断开设备")
-        self.btn_connect.clicked.connect(self.sim.connect_all)
         self.btn_disconnect.clicked.connect(self.sim.disconnect_all)
         self.check_label = QLabel("设备未连接")
-        btns.addWidget(self.btn_connect)
+        btns.addWidget(self.btn_refresh)
         btns.addWidget(self.btn_disconnect)
         btns.addStretch(1)
         btns.addWidget(self.check_label)
         self.step1.content_lay.addLayout(btns)
 
-    # ---- 步骤② 配置实验 ----
-    def _build_step2(self):
-        form = QFormLayout()
-        self.ed_exp_id = QLineEdit()
-        self.ed_name = QLineEdit()
-        self.ed_operator = QLineEdit()
-        self.ed_remark = QLineEdit()
-        form.addRow("实验编号", self.ed_exp_id)
-        form.addRow("实验名称", self.ed_name)
-        form.addRow("操作者", self.ed_operator)
-        form.addRow("备注", self.ed_remark)
-        self.step2.content_lay.addLayout(form)
+    # ---- 串口选择与连接 ----
+    def refresh_ports(self):
+        """枚举本机串口填入两个下拉框。"""
+        for combo in (self.bath_combo, self.sensor_combo):
+            combo.clear()
+            for p in list_ports.comports():
+                combo.addItem(f"{p.device}  {p.description}")
 
-        note = QLabel("培养参数（温度 / 氧浓度 / 微泵 / 位置对准）在“外设控制”页调整；"
-                      "检测模块在实验启动后于运行页按需启停")
-        note.setStyleSheet("color: #8fa8a4;")
-        note.setWordWrap(True)
-        self.step2.content_lay.addWidget(note)
-        btns = QHBoxLayout()
-        self.btn_save = QPushButton("保存配置")
-        self.btn_save.clicked.connect(self.save_config)
-        btns.addWidget(self.btn_save)
-        btns.addStretch(1)
-        self.config_hint = QLabel("")
-        self.config_hint.setStyleSheet("color: #00e5c0;")
-        btns.addWidget(self.config_hint)
-        self.step2.content_lay.addLayout(btns)
+    def _selected_port(self, combo):
+        text = combo.currentText()
+        return text.split("  ")[0].strip() if text else ""
 
-    def save_config(self):
-        name = self.ed_name.text().strip()
-        if not name:
-            QMessageBox.warning(self, "提示", "请填写实验名称")
-            return
-        exp_id = self.ed_exp_id.text().strip() or self.sim.next_exp_id()
-        self.sim.create_experiment(exp_id, name,
-                                   self.ed_operator.text(), self.ed_remark.text())
-        self.config_hint.setText("配置完成，点击左侧“运行 → 启动”开始培养")
+    def _connect_bath(self):
+        port = self._selected_port(self.bath_combo)
+        if port:
+            self.sim.connect_bath(port)
 
-    def new_exp(self):
-        self.sim.reset_experiment()
-        for ed in (self.ed_exp_id, self.ed_name, self.ed_operator, self.ed_remark):
-            ed.clear()
-        self.config_hint.setText("")
+    def _connect_sensor(self):
+        port = self._selected_port(self.sensor_combo)
+        if port:
+            self.sim.connect_sensor(port)
 
     # ---- 状态刷新 ----
     def refresh(self):
         sim = self.sim
-        st = sim.exp_state
         all_conn = all(sim.connected.values())
-        has_exp = bool(sim.exp_info.get("id"))
-        running = st in (ExpState.RUNNING, ExpState.PAUSED)
-        finished = st is ExpState.FINISHED
 
         for name, card in self.dev_cards.items():
             card.set_state(sim.connected.get(name, False))
-        self.btn_connect.setEnabled(not all_conn)
-        self.btn_disconnect.setEnabled(all_conn and not running)
-        self.check_label.setText("设备已连接" if all_conn else "设备未连接")
+        self.btn_connect_bath.setEnabled(not sim.connected.get("恒温槽", False))
+        self.btn_connect_sensor.setEnabled(
+            not sim.connected.get("盒内温度传感器", False))
+        self.btn_disconnect.setEnabled(any(sim.connected.values()))
+        self.check_label.setText(
+            f"已连接（{sim.connected_port}）" if sim.real_mode else "设备未连接")
 
         self.step1.set_status("done" if all_conn else "active")
-        self.step2.set_status("done" if has_exp else ("active" if all_conn else "locked"))
-        self.step2.content.setEnabled(all_conn and not running)
 
-        if all_conn and not has_exp and not self.ed_exp_id.text().strip():
-            self.ed_exp_id.setText(sim.next_exp_id())
-
-        self.btn_next.setVisible(finished)
-        if running:
-            self.run_label.setText(
-                f"实验{sim.exp_state.value}，已运行 {sim.exp_elapsed()}；"
-                f"环境数据落盘: {sim.live_data_dir}")
-        elif finished:
-            self.run_label.setText(
-                f"实验已结束（{time.strftime('%H:%M:%S', time.localtime(sim.exp_finished_at))}），"
-                f"数据已归档: {sim.last_export_path}")
+        if all_conn:
+            self.run_label.setText("设备已连接，可在“温度控制”页设定目标温度")
         else:
-            self.run_label.setText("完成设备连接与实验配置后，点击左侧“运行 → 启动”开始培养")
+            self.run_label.setText("选择串口连接设备后，可在“温度控制”页设定目标温度")
