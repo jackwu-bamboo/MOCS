@@ -126,15 +126,15 @@ QFrame#Collapsible {
     border: 1px solid #3f8a57;
     border-radius: 4px;
 }
-QToolButton#CollapsibleToggle {
+QPushButton#CollapsibleToggle {
     color: #e6fffa;
     font-size: 13px;
     font-weight: bold;
-    padding: 8px 10px;
+    padding: 6px 14px 6px 10px;
     border: none;
     text-align: left;
 }
-QToolButton#CollapsibleToggle:hover {
+QPushButton#CollapsibleToggle:hover {
     background-color: #1d3f3a;
 }
 """

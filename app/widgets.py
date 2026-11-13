@@ -3,7 +3,7 @@ from collections import deque
 
 from PyQt5.QtCore import QPointF, QRect, Qt
 from PyQt5.QtGui import QColor, QPainter, QPen, QPolygonF
-from PyQt5.QtWidgets import (QFrame, QHBoxLayout, QLabel, QSizePolicy, QToolButton,
+from PyQt5.QtWidgets import (QFrame, QHBoxLayout, QLabel, QPushButton, QSizePolicy,
                              QVBoxLayout, QWidget)
 
 ACCENT = "#00e5c0"
@@ -20,23 +20,26 @@ class Card(QFrame):
         if title:
             t = QLabel(title)
             t.setObjectName("CardTitle")
+            t.setWordWrap(True)
             self.body.addWidget(t)
 
 
+COLLAPSED_MARK = "▸  "
+EXPANDED_MARK = "▾  "
+
+
 class CollapsibleSection(QFrame):
-    """可展开条目：点击标题展开/收起内容。"""
+    """可展开条目：点击标题展开/收起内容。箭头写在标题文字里，避免与文字抢宽度被截断。"""
 
     def __init__(self, title, expanded=False, parent=None):
         super().__init__(parent)
         self.setObjectName("Collapsible")
-        self.toggle = QToolButton()
+        self._title = title
+        self.toggle = QPushButton()
         self.toggle.setObjectName("CollapsibleToggle")
-        self.toggle.setText(title)
         self.toggle.setCheckable(True)
-        self.toggle.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
-        self.toggle.setFixedHeight(34)
-        self.toggle.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.toggle.setArrowType(Qt.RightArrow)
+        self.toggle.setMinimumHeight(34)
+        self.toggle.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
         self.toggle.toggled.connect(self._on_toggled)
         self.content = QWidget()
         self.content_lay = QVBoxLayout(self.content)
@@ -49,9 +52,10 @@ class CollapsibleSection(QFrame):
         lay.addWidget(self.toggle)
         lay.addWidget(self.content)
         self.toggle.setChecked(expanded)
+        self._on_toggled(expanded)
 
     def _on_toggled(self, on):
-        self.toggle.setArrowType(Qt.DownArrow if on else Qt.RightArrow)
+        self.toggle.setText((EXPANDED_MARK if on else COLLAPSED_MARK) + self._title)
         self.content.setVisible(on)
 
     def add_widget(self, widget, stretch=0):

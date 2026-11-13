@@ -12,6 +12,7 @@ from PyQt5.QtWidgets import (QDialog, QDoubleSpinBox, QFrame, QHBoxLayout, QLabe
                              QListWidget, QMainWindow, QPushButton, QVBoxLayout,
                              QWidget)
 
+from app.camera_view import MicroscopeView
 from app.external_app import ExternalAppView
 from app.pages.workflow import WorkflowPage
 from app.simulator import DeviceSimulator
@@ -30,6 +31,7 @@ def _wrap(layout):
 
 def _pending_label(text=PENDING):
     lbl = QLabel(text)
+    lbl.setWordWrap(True)
     lbl.setAlignment(Qt.AlignCenter)
     lbl.setStyleSheet("color: #5f7d78;")
     return lbl
@@ -140,8 +142,14 @@ class MainWindow(QMainWindow):
         col.setSpacing(12)
         col.addWidget(self._build_control_group())
         col.addWidget(self._build_detect_group())
-        col.addWidget(_placeholder_card("明场显微成像实时显示"), 1)
+        col.addStretch(1)
         return _wrap(col)
+
+    def _build_microscope_card(self):
+        card = Card("明场显微成像实时显示")
+        self.microscope = MicroscopeView()
+        card.body.addWidget(self.microscope, 1)
+        return card
 
     def _build_control_group(self):
         g = ModuleGroup("控制模块参数设置")
@@ -169,6 +177,7 @@ class MainWindow(QMainWindow):
         self.sp_bath.setRange(-20.0, 50.0)
         self.sp_bath.setDecimals(1)
         self.sp_bath.setValue(self.sim.temp_target)
+        self.sp_bath.setMinimumWidth(70)
         row.addWidget(self.sp_bath, 1)
         self.btn_apply_temp = QPushButton("应用")
         self.btn_apply_temp.clicked.connect(
@@ -182,9 +191,13 @@ class MainWindow(QMainWindow):
     def _build_middle(self):
         col = QVBoxLayout()
         col.setSpacing(12)
-        col.addWidget(_placeholder_card("心脏类器官搏动曲线和搏动频率实时显示"), 2)
+        top = QHBoxLayout()
+        top.setSpacing(12)
+        top.addWidget(_placeholder_card("心脏类器官搏动曲线和搏动频率实时显示"), 1)
+        top.addWidget(self._build_microscope_card(), 1)
+        col.addLayout(top, 1)
         self.electro_card = _external_card("多通道电生理信号实时显示", ELECTRO_EXE)
-        col.addWidget(self.electro_card, 5)
+        col.addWidget(self.electro_card, 1)
         return _wrap(col)
 
     # ---- 右栏：实时参数 / 干预 / 日志 ----
@@ -243,5 +256,6 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event):
         # 退出时关闭嵌入的外部程序、串口与轮询线程
         self.electro_card.external_view.shutdown()
+        self.microscope.shutdown()
         self.sim.shutdown()
         super().closeEvent(event)
