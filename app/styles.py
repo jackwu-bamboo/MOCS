@@ -110,4 +110,31 @@ QLabel#SideStat {
     font-weight: bold;
     color: #00e5c0;
 }
+QFrame#ModuleGroup {
+    background-color: #112b28;
+    border: 2px solid #2e6da4;
+    border-radius: 6px;
+}
+QLabel#ModuleTitle {
+    font-size: 15px;
+    font-weight: bold;
+    color: #ffffff;
+    padding: 4px;
+}
+QFrame#Collapsible {
+    background-color: #16302e;
+    border: 1px solid #3f8a57;
+    border-radius: 4px;
+}
+QToolButton#CollapsibleToggle {
+    color: #e6fffa;
+    font-size: 13px;
+    font-weight: bold;
+    padding: 8px 10px;
+    border: none;
+    text-align: left;
+}
+QToolButton#CollapsibleToggle:hover {
+    background-color: #1d3f3a;
+}
 """
