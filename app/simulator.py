@@ -13,9 +13,10 @@ from enum import Enum
 from PyQt5.QtCore import QObject, QTimer, pyqtSignal
 
 from app.box_sensor import BoxSensorDriver
+from app.stx_gas import StxGasDriver
 from app.thermo_device import ThermoModbusDriver
 
-DEVICE_NAMES = ["恒温槽", "盒内温度传感器"]
+DEVICE_NAMES = ["恒温槽", "盒内温度传感器", "气体单元"]
 
 HISTORY_INTERVAL = 0.2  # 慢变量历史采样间隔 s
 
@@ -67,6 +68,14 @@ class DeviceSimulator(QObject):
         self.box_driver.temperature_read.connect(self._on_box_temp)
         self.box_driver.error.connect(lambda m: self.raise_alarm(f"盒内温度传感器通信错误: {m}"))
 
+        # 气体单元（东海希多 STX，CO2/O2）：用户在界面选择串口后连接
+        self.gas = {"co2": {"sv": 5.0}, "o2": {"sv": 21.0}}   # 设定值 %
+        self.gas_pv = {"co2_u3": None, "co2_u4": None, "o2": None}   # 实测值 %
+        self.gas_driver = StxGasDriver(parent=self)
+        self.gas_driver.state_changed.connect(self._on_gas_state)
+        self.gas_driver.gas_read.connect(self._on_gas_read)
+        self.gas_driver.error.connect(lambda m: self.raise_alarm(f"气体单元通信错误: {m}"))
+
         self.timer = QTimer(self)
         self.timer.setInterval(int(HISTORY_INTERVAL * 1000))
         self.timer.timeout.connect(self._tick)
@@ -85,6 +94,31 @@ class DeviceSimulator(QObject):
             return
         self.raise_alarm(f"正在连接盒内温度传感器（{port}）...")
         self.box_driver.connect_port(port)
+
+    def connect_gas(self, port):
+        """连接气体单元（用户选择的串口）。"""
+        if self.gas_driver.is_connected:
+            return
+        self.raise_alarm(f"正在连接气体单元（{port}）...")
+        self.gas_driver.connect_port(port)
+
+    def _on_gas_state(self, connected, port):
+        """气体单元连接状态；连接成功后把已设定的浓度下发到设备。"""
+        if connected:
+            self.connected["气体单元"] = True
+            self.raise_alarm(f"气体单元连接成功（{port}）")
+            for key in self.gas:
+                self.gas_driver.set_gas(key, self.gas[key]["sv"])
+        elif self.connected.get("气体单元"):
+            self.connected["气体单元"] = False
+            self.gas_pv = {k: None for k in self.gas_pv}
+            self.raise_alarm("气体单元已断开")
+        self.states_updated.emit()
+
+    def _on_gas_read(self, data):
+        """气体实测值（已在后台线程读取，经信号切回 GUI 线程）。"""
+        self.gas_pv = data
+        self.states_updated.emit()
 
     def _on_device_state(self, connected, port):
         if connected:
@@ -135,6 +169,7 @@ class DeviceSimulator(QObject):
         self.timer.stop()
         self.driver.disconnect()
         self.box_driver.disconnect()
+        self.gas_driver.disconnect()
         self.real_mode = False
         self.connected_port = ""
         self.raise_alarm("已断开设备连接")
@@ -144,6 +179,7 @@ class DeviceSimulator(QObject):
         """退出程序时关闭串口。"""
         self.driver.shutdown()
         self.box_driver.shutdown()
+        self.gas_driver.shutdown()
 
     def _set_exp_state(self, state):
         if self.exp_state is not state:
@@ -176,6 +212,15 @@ class DeviceSimulator(QObject):
                 self.raise_alarm(f"设备{'启动' if on else '停止'}命令写入失败")
         self.run_on = bool(on)
         self.raise_alarm(f"设备{'已启动' if on else '已停止'}")
+
+    def set_gas(self, key, value):
+        """设定 CO2/O2 浓度（%）：已连接气体单元则下发，否则只保存设定值。"""
+        if self.connected.get("气体单元") and not self.gas_driver.set_gas(key, value):
+            self.raise_alarm(f"{'二氧化碳' if key == 'co2' else '氧气'}设定下发失败: {value:.1f} %")
+            return
+        self.gas[key]["sv"] = value
+        self.raise_alarm(f"{'二氧化碳' if key == 'co2' else '氧气'}设定: {value:.1f} %")
+        self.states_updated.emit()
 
     # ---- 定时刷新 ----
     def _tick(self):

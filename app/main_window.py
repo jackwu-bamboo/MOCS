@@ -8,8 +8,8 @@
 import time
 
 from PyQt5.QtCore import Qt, QTimer
-from PyQt5.QtWidgets import (QDialog, QDoubleSpinBox, QFrame, QHBoxLayout, QLabel,
-                             QListWidget, QMainWindow, QPushButton, QVBoxLayout,
+from PyQt5.QtWidgets import (QDialog, QDoubleSpinBox, QFrame, QGridLayout, QHBoxLayout,
+                             QLabel, QListWidget, QMainWindow, QPushButton, QVBoxLayout,
                              QWidget)
 
 from app.camera_view import MicroscopeView
@@ -155,7 +155,7 @@ class MainWindow(QMainWindow):
         g = ModuleGroup("控制模块参数设置")
         env = CollapsibleSection("器官芯片培养环境控制", expanded=True)
         env.add_widget(self._build_temp_control_section())
-        env.add_widget(_pending_section("培养盒中氧气和二氧化碳浓度"))
+        env.add_widget(self._build_gas_section())
         env.add_widget(_pending_section("微泵驱动参数"))
         g.add_widget(env)
         g.add_widget(_pending_section("电动载物台控制"))
@@ -187,6 +187,27 @@ class MainWindow(QMainWindow):
         self.temp_section = sec
         return sec
 
+    def _build_gas_section(self):
+        """培养盒中氧气和二氧化碳浓度：设定值（%），经 STX 气体单元下发。"""
+        sec = CollapsibleSection("培养盒中氧气和二氧化碳浓度", expanded=True)
+        self.gas_spins = {}
+        for key, name, vmax in (("co2", "二氧化碳浓度 (%)", 20.0), ("o2", "氧气浓度 (%)", 100.0)):
+            row = QHBoxLayout()
+            row.addWidget(QLabel(name))
+            sp = QDoubleSpinBox()
+            sp.setRange(0.0, vmax)
+            sp.setDecimals(1)
+            sp.setValue(self.sim.gas[key]["sv"])
+            sp.setMinimumWidth(70)
+            row.addWidget(sp, 1)
+            btn = QPushButton("应用")
+            btn.clicked.connect(lambda _, k=key, s=sp: self.sim.set_gas(k, s.value()))
+            row.addWidget(btn)
+            sec.add_widget(_wrap(row))
+            self.gas_spins[key] = sp
+        self.gas_section = sec
+        return sec
+
     # ---- 中栏：实时显示 ----
     def _build_middle(self):
         col = QVBoxLayout()
@@ -210,6 +231,19 @@ class MainWindow(QMainWindow):
         self.val_box = ValueCard("盒内温度", "℃")
         env.body.addWidget(self.val_bath)
         env.body.addWidget(self.val_box)
+        grid = QGridLayout()
+        grid.setSpacing(4)
+        self.gas_labels = {}
+        for r, (key, name) in enumerate((("co2_u3", "CO2 实测 (Unit3)"),
+                                         ("co2_u4", "CO2 实测 (Unit4)"),
+                                         ("o2", "O2 实测"))):
+            v = QLabel("--")
+            v.setObjectName("SideStat")
+            grid.addWidget(QLabel(name), r, 0)
+            grid.addWidget(v, r, 1)
+            grid.addWidget(QLabel("%"), r, 2)
+            self.gas_labels[key] = v
+        env.body.addLayout(grid)
         col.addWidget(env)
 
         col.addWidget(_placeholder_card("TEER检测数值实时显示"))
@@ -240,9 +274,13 @@ class MainWindow(QMainWindow):
             f"恒温槽: {'已连接' if bath_ok else '未连接'}    "
             f"盒内传感器: {'已连接' if box_ok else '未连接'}")
         self.temp_section.setEnabled(sim.unlocked)
+        self.gas_section.setEnabled(sim.connected.get("气体单元", False))
         self.val_bath.set_value(f"{sim.temp_current:.2f}" if bath_ok else "--")
         self.val_box.set_value(
             f"{sim.box_temp:.2f}" if box_ok and sim.box_temp is not None else "--")
+        for key, lbl in self.gas_labels.items():
+            v = sim.gas_pv.get(key)
+            lbl.setText(f"{v:.2f}" if v is not None else "--")
 
     def _on_alarm(self, msg):
         ts, _ = self.sim.alarms[0]

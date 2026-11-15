@@ -116,6 +116,17 @@ class WorkflowPage(QWidget):
         sensor_row.addWidget(self.btn_connect_sensor)
         self.step1.content_lay.addLayout(sensor_row)
 
+        # 气体单元（STX）串口
+        gas_row = QHBoxLayout()
+        gas_row.addWidget(QLabel("气体单元串口:"))
+        self.gas_combo = QComboBox()
+        self.gas_combo.setMinimumWidth(170)
+        gas_row.addWidget(self.gas_combo, 1)
+        self.btn_connect_gas = QPushButton("连接")
+        self.btn_connect_gas.clicked.connect(self._connect_gas)
+        gas_row.addWidget(self.btn_connect_gas)
+        self.step1.content_lay.addLayout(gas_row)
+
         # 刷新 + 断开 + 状态
         btns = QHBoxLayout()
         self.btn_refresh = QPushButton("刷新串口列表")
@@ -132,7 +143,7 @@ class WorkflowPage(QWidget):
     # ---- 串口选择与连接 ----
     def refresh_ports(self):
         """枚举本机串口填入两个下拉框。"""
-        for combo in (self.bath_combo, self.sensor_combo):
+        for combo in (self.bath_combo, self.sensor_combo, self.gas_combo):
             combo.clear()
             for p in list_ports.comports():
                 combo.addItem(f"{p.device}  {p.description}")
@@ -151,6 +162,11 @@ class WorkflowPage(QWidget):
         if port:
             self.sim.connect_sensor(port)
 
+    def _connect_gas(self):
+        port = self._selected_port(self.gas_combo)
+        if port:
+            self.sim.connect_gas(port)
+
     # ---- 状态刷新 ----
     def refresh(self):
         sim = self.sim
@@ -161,6 +177,7 @@ class WorkflowPage(QWidget):
         self.btn_connect_bath.setEnabled(not sim.connected.get("恒温槽", False))
         self.btn_connect_sensor.setEnabled(
             not sim.connected.get("盒内温度传感器", False))
+        self.btn_connect_gas.setEnabled(not sim.connected.get("气体单元", False))
         self.btn_disconnect.setEnabled(any(sim.connected.values()))
         self.check_label.setText(
             f"已连接（{sim.connected_port}）" if sim.real_mode else "设备未连接")
